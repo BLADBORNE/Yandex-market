@@ -1,0 +1,32 @@
+spring:
+  application:
+    name: market-app
+
+  datasource:
+    url: jdbc:postgresql://${HOST:localhost}:${PORT:5432}/${POSTGRES_DB:market_db}
+    username: ${POSTGRES_USER:dev}
+    password: ${POSTGRES_PASSWORD:qwerty}
+    driver-class-name: org.postgresql.Driver
+
+  liquibase:
+    enabled: true
+
+  jpa:
+    database: PostgreSQL
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+
+server:
+  port: 8080
+
+logging:
+  file:
+    path: logs
+  level:
+    org.springframework.web: info
+    root: info
