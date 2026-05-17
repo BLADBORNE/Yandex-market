@@ -16,7 +16,7 @@ public class ProductPageableUtil {
 
             case ALPHA -> {
 
-                Sort updatedSort = Sort.by(Sort.Direction.ASC, "description");
+                Sort updatedSort = Sort.by(Sort.Direction.ASC, "title");
 
                 yield PageRequest.of(pageable.getPageNumber() - 1, pageable.getPageSize(), updatedSort);
             }

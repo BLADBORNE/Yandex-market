@@ -6,7 +6,7 @@ import org.springframework.lang.NonNull;
 @Builder
 public record PageableResult(Integer pageSize, Integer pageNumber, Boolean hasPrevious, Boolean hasNext) {
 
-    public static PageableResult INIT(
+    public static PageableResult init(
         @NonNull Integer pageSize,
         @NonNull Integer pageNumber,
         @NonNull Boolean hasPrevious,

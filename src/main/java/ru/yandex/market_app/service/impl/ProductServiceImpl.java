@@ -40,7 +40,7 @@ public class ProductServiceImpl implements ProductService {
         List<ProductResultDto> resultObjects = result.getContent();
 
         if (CollectionUtils.isEmpty(resultObjects)) {
-            return GetProductModelDto.EMPTY(search, sort);
+            return GetProductModelDto.emptyResult(search, sort);
         }
 
         List<List<ProductResultDto>> products = new ArrayList<>();

@@ -26,7 +26,7 @@ import java.util.List;
     })
 public interface MarketMapper {
 
-    String INIT_PAGEABLE = "java(PageableResult.INIT(paging.getSize(), paging.getNumber() + 1, paging.hasPrevious(), paging.hasNext()))";
+    String INIT_PAGEABLE = "java(PageableResult.init(paging.getSize(), paging.getNumber() + 1, paging.hasPrevious(), paging.hasNext()))";
 
     @Mapping(target = "id", expression = "java(BasketProductId.builder().build())")
     BasketProduct toBasketProduct(Product product, Basket basket, int count);

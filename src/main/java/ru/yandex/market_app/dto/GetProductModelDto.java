@@ -14,14 +14,14 @@ public record GetProductModelDto(
     String sort,
     PageableResult paging
 ) {
-    public static GetProductModelDto EMPTY(String search, ProductPageableUtil.ProductSort sort) {
+    public static GetProductModelDto emptyResult(String search, ProductPageableUtil.ProductSort sort) {
         var page = Page.empty();
 
         return GetProductModelDto.builder()
             .items(Collections.emptyList())
             .search(search)
             .sort(sort.name())
-            .paging(PageableResult.INIT(page.getSize(), page.getNumber(), page.hasPrevious(), page.hasNext()))
+            .paging(PageableResult.init(page.getSize(), page.getNumber(), page.hasPrevious(), page.hasNext()))
             .build();
     }
 }
