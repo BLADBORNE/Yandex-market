@@ -17,7 +17,7 @@ public class SqlUtil {
                         WHERE bp.id.productId = p.id
                           AND b.status = 'ACTIVE'), 0)
        FROM Product p
-       WHERE (:search IS NULL
+       WHERE (COALESCE(:search, '') = ''
            OR LOWER(p.title) LIKE CONCAT('%', LOWER(:search), '%')
            OR LOWER(p.description) LIKE CONCAT('%', LOWER(:search), '%'))
        """;

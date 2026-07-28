@@ -36,7 +36,7 @@ public class ProductServiceImpl implements ProductService {
         @NonNull ProductPageableUtil.ProductSort sort,
         @NonNull Pageable pageable
     ) {
-        Slice<ProductResultDto> result = productRepository.getProductsBySearch(search == null ? "" : search, pageable);
+        Slice<ProductResultDto> result = productRepository.getProductsBySearch(search, pageable);
         List<ProductResultDto> resultObjects = result.getContent();
 
         if (CollectionUtils.isEmpty(resultObjects)) {
