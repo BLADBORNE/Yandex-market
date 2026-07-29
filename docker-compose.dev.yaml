@@ -1,0 +1,27 @@
+services:
+  market-db:
+    image: postgres:17.2
+    container_name: market-app-db
+    ports:
+      - "5432:5432"
+    volumes:
+      - market-app-data-storage:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: market_db
+      POSTGRES_USER: dev
+      POSTGRES_PASSWORD: qwerty
+      PGDATA: /var/lib/postgresql/data/psqldata
+    healthcheck:
+      test: [ CMD-SHELL, pg_isready -U dev -d market_db ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+
+volumes:
+  market-app-data-storage:
