@@ -1,7 +1,9 @@
 package ru.yandex.market_app.web;
 
+import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.ui.Model;
+import org.springframework.web.server.ServerWebInputException;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -26,6 +28,12 @@ public final class GlobalExceptionHandler {
     @ExceptionHandler({NotRemoveItemException.class, OperationNotSupportedException.class})
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     public String handleBadRequestException(RuntimeException exception, Model model) {
+        return buildResponse(exception, HttpStatus.BAD_REQUEST, model);
+    }
+
+    @ExceptionHandler({ConstraintViolationException.class, ServerWebInputException.class})
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public String handleInvalidRequestException(RuntimeException exception, Model model) {
         return buildResponse(exception, HttpStatus.BAD_REQUEST, model);
     }
 

@@ -1,28 +1,29 @@
 package ru.yandex.market_app.model;
 
-import jakarta.persistence.Table;
-import jakarta.persistence.Entity;
-import jakarta.persistence.OneToOne;
-import jakarta.persistence.FetchType;
-import jakarta.persistence.JoinColumn;
-import jakarta.persistence.Column;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import lombok.experimental.SuperBuilder;
+import lombok.Setter;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.relational.core.mapping.Column;
+import org.springframework.data.relational.core.mapping.Table;
 
 import java.math.BigDecimal;
 
-@SuperBuilder(toBuilder = true)
 @Getter
+@Setter
+@Builder(toBuilder = true)
+@NoArgsConstructor
+@AllArgsConstructor
 @Table(schema = "market", name = "order")
-@Entity
-@NoArgsConstructor(force = true)
-public final class Order extends BaseModel {
+public final class Order {
 
-    @OneToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "basket_id", nullable = false)
-    private final Basket basket;
+    @Id
+    private Long id;
 
-    @Column(nullable = false)
-    private final BigDecimal sum;
+    @Column("basket_id")
+    private Long basketId;
+
+    private BigDecimal sum;
 }

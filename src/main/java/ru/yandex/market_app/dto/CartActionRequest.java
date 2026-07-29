@@ -1,0 +1,17 @@
+package ru.yandex.market_app.dto;
+
+import jakarta.validation.constraints.NotNull;
+import lombok.Getter;
+import lombok.Setter;
+import ru.yandex.market_app.model.ProductAction;
+
+@Getter
+@Setter
+public class CartActionRequest {
+
+    @NotNull
+    private Long id;
+
+    @NotNull
+    private ProductAction action;
+}

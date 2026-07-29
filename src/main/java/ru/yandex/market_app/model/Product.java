@@ -1,36 +1,33 @@
 package ru.yandex.market_app.model;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Table;
-import jakarta.persistence.Entity;
-import jakarta.persistence.OneToMany;
-import jakarta.persistence.FetchType;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import lombok.experimental.SuperBuilder;
+import lombok.Setter;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.relational.core.mapping.Column;
+import org.springframework.data.relational.core.mapping.Table;
 
 import java.math.BigDecimal;
-import java.util.List;
 
-@SuperBuilder(toBuilder = true)
 @Getter
+@Setter
+@Builder(toBuilder = true)
+@NoArgsConstructor
+@AllArgsConstructor
 @Table(schema = "market", name = "product")
-@Entity
-@NoArgsConstructor(force = true)
-public final class Product extends BaseModel {
+public final class Product {
 
-    @Column(nullable = false, unique = true)
-    private final String title;
+    @Id
+    private Long id;
 
-    @Column(nullable = false)
-    private final String description;
+    private String title;
 
-    @Column(name = "img_path", nullable = false, unique = true)
-    private final String imgPath;
+    private String description;
 
-    @Column(nullable = false)
-    private final BigDecimal price;
+    @Column("img_path")
+    private String imgPath;
 
-    @OneToMany(mappedBy = "product", fetch = FetchType.LAZY)
-    private final List<BasketProduct> basketProduct;
+    private BigDecimal price;
 }

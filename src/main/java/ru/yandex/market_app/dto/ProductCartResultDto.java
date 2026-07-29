@@ -13,8 +13,6 @@ public record ProductCartResultDto(
 
     BigDecimal price,
 
-    Integer count,
-
-    BigDecimal total
+    Integer count
 ) {
 }

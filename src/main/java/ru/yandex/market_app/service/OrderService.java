@@ -1,14 +1,15 @@
 package ru.yandex.market_app.service;
 
 import org.springframework.lang.NonNull;
+import reactor.core.publisher.Mono;
 import ru.yandex.market_app.dto.GetListOrderModelDto;
 import ru.yandex.market_app.dto.GetOrderModelDto;
 
 public interface OrderService {
 
-    GetListOrderModelDto getOrders();
+    Mono<GetListOrderModelDto> getOrders();
 
-    GetOrderModelDto getOrder(@NonNull Long id);
+    Mono<GetOrderModelDto> getOrder(@NonNull Long id);
 
-    Long completeOrder();
+    Mono<Long> completeOrder();
 }

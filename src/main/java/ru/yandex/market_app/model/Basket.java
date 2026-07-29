@@ -1,35 +1,25 @@
 package ru.yandex.market_app.model;
 
-import jakarta.persistence.Table;
-import jakarta.persistence.Entity;
-import jakarta.persistence.OneToMany;
-import jakarta.persistence.FetchType;
-import jakarta.persistence.Enumerated;
-import jakarta.persistence.EnumType;
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import lombok.experimental.SuperBuilder;
+import lombok.Setter;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.relational.core.mapping.Table;
 
-import java.util.ArrayList;
-import java.util.List;
-
-import static jakarta.persistence.CascadeType.MERGE;
-import static jakarta.persistence.CascadeType.PERSIST;
-
-@SuperBuilder(toBuilder = true)
 @Getter
+@Setter
+@Builder(toBuilder = true)
+@NoArgsConstructor
+@AllArgsConstructor
 @Table(schema = "market", name = "basket")
-@Entity
-@NoArgsConstructor(force = true)
-public final class Basket extends BaseModel {
+public final class Basket {
 
-    @Builder.Default
-    @OneToMany(mappedBy = "basket", fetch = FetchType.LAZY, cascade = {PERSIST, MERGE}, orphanRemoval = true)
-    private final List<BasketProduct> basketProducts = new ArrayList<>();
+    @Id
+    private Long id;
 
-    @Enumerated(EnumType.STRING)
-    private final Status status;
+    private Status status;
 
     public enum Status {
 
