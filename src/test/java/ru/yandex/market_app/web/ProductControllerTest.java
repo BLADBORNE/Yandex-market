@@ -1,28 +1,36 @@
 package ru.yandex.market_app.web;
 
+import jakarta.servlet.RequestDispatcher;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import ru.yandex.market_app.dto.ErrorResponse;
 import ru.yandex.market_app.dto.GetProductModelDto;
 import ru.yandex.market_app.dto.PageableResult;
 import ru.yandex.market_app.dto.ProductResultDto;
+import ru.yandex.market_app.exception.ItemNotFoundException;
+import ru.yandex.market_app.exception.OperationNotSupportedException;
 import ru.yandex.market_app.service.BasketService;
 import ru.yandex.market_app.service.ProductService;
 
 import java.math.BigDecimal;
 import java.util.List;
 
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.instanceOf;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.model;
@@ -132,6 +140,50 @@ class ProductControllerTest {
     void shouldReturnBadRequestWhenActionParameterIsMissing() throws Exception {
         mockMvc.perform(post("/items/{id}", 7L))
             .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void shouldReturnNotFoundErrorWhenItemDoesNotExist() throws Exception {
+        when(productService.getItem(99L)).thenThrow(new ItemNotFoundException("Товар не найден"));
+
+        mockMvc.perform(get("/items/{id}", 99L))
+            .andExpect(status().isNotFound())
+            .andExpect(view().name("error"))
+            .andExpect(model().attribute("errorResponse", instanceOf(ErrorResponse.class)))
+            .andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_HTML))
+            .andExpect(content().string(containsString("Товар не найден")));
+    }
+
+    @Test
+    void shouldReturnBadRequestErrorWhenActionIsNotSupported() throws Exception {
+        when(basketService.changeProductCountFromItemPage(7L, MINUS))
+            .thenThrow(new OperationNotSupportedException("Операция не поддерживается"));
+
+        mockMvc.perform(
+                post("/items/{id}", 7L)
+                    .param("action", MINUS.name())
+            )
+            .andExpect(status().isBadRequest())
+            .andExpect(view().name("error"))
+            .andExpect(model().attribute("errorResponse", instanceOf(ErrorResponse.class)))
+            .andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_HTML))
+            .andExpect(content().string(containsString("Операция не поддерживается")));
+    }
+
+    @Test
+    void shouldRenderThymeleafPageForDefaultSpringError() throws Exception {
+        mockMvc.perform(
+                get("/error")
+                    .accept(MediaType.TEXT_HTML)
+                    .requestAttr(RequestDispatcher.ERROR_STATUS_CODE, 500)
+                    .requestAttr(RequestDispatcher.ERROR_REQUEST_URI, "/items")
+            )
+            .andExpect(status().isInternalServerError())
+            .andExpect(view().name("error"))
+            .andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_HTML))
+            .andExpect(content().string(containsString("500")))
+            .andExpect(content().string(containsString("Не удалось выполнить запрос")))
+            .andExpect(content().string(containsString("Вернуться в каталог")));
     }
 
     private ProductResultDto product(Long id, String title, Integer count) {

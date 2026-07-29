@@ -14,4 +14,6 @@ public class TemplateNameUtil {
     public final String ORDERS = "orders";
 
     public final String ORDER = "order";
+
+    public final String ERROR = "error";
 }

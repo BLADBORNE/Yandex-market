@@ -3,19 +3,26 @@ package ru.yandex.market_app.web;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import ru.yandex.market_app.dto.ErrorResponse;
 import ru.yandex.market_app.dto.GetProductCartModelDto;
 import ru.yandex.market_app.dto.ProductResultDto;
+import ru.yandex.market_app.exception.NotRemoveItemException;
 import ru.yandex.market_app.service.BasketService;
 
 import java.math.BigDecimal;
 import java.util.List;
 
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.instanceOf;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.model;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -79,5 +86,24 @@ class BasketControllerTest {
                     .param("action", DELETE.name())
             )
             .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void shouldReturnBadRequestErrorWhenProductCannotBeRemoved() throws Exception {
+        var message = "Корзина не создана, удаление товаров невозможно";
+        doThrow(new NotRemoveItemException(message))
+            .when(basketService)
+            .changeProductCountFromCartPage(3L, DELETE);
+
+        mockMvc.perform(
+                post("/cart/items")
+                    .param("id", "3")
+                    .param("action", DELETE.name())
+            )
+            .andExpect(status().isBadRequest())
+            .andExpect(view().name("error"))
+            .andExpect(model().attribute("errorResponse", instanceOf(ErrorResponse.class)))
+            .andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_HTML))
+            .andExpect(content().string(containsString(message)));
     }
 }

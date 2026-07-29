@@ -22,4 +22,6 @@ public class TemplateAttributeNameUtil {
     public final String ORDER = "order";
 
     public final String NEW_ORDER = "newOrder";
+
+    public final String ERROR_RESPONSE = "errorResponse";
 }

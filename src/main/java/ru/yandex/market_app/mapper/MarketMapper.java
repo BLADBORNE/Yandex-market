@@ -39,8 +39,11 @@ public interface MarketMapper {
     @Mapping(target = "totalSum", source = "order.sum")
     GetOrderModelDto toGetOrderModelDto(Order order);
 
+    @Mapping(target = "count", ignore = true)
     ItemDto toItemDto(Product product);
 
+    @Mapping(target = "id", ignore = true)
+    @Mapping(target = "basketProducts", ignore = true)
     Basket toBasket(Basket.Status status);
 
     GetProductCartModelDto toGetProductCartModelDto(List<ProductCartResultDto> items, BigDecimal total);

@@ -3,8 +3,10 @@ package ru.yandex.market_app.web;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import ru.yandex.market_app.dto.ErrorResponse;
 import ru.yandex.market_app.dto.GetListOrderModelDto;
 import ru.yandex.market_app.dto.GetOrderModelDto;
 import ru.yandex.market_app.dto.ItemDto;
@@ -12,11 +14,15 @@ import ru.yandex.market_app.service.OrderService;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.NoSuchElementException;
 
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.instanceOf;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.model;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -87,6 +93,18 @@ class OrderControllerTest {
     void shouldReturnBadRequestWhenOrderIdIsNotANumber() throws Exception {
         mockMvc.perform(get("/orders/not-a-number"))
             .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void shouldReturnNotFoundErrorWhenOrderDoesNotExist() throws Exception {
+        when(orderService.getOrder(99L)).thenThrow(new NoSuchElementException("Заказ не найден"));
+
+        mockMvc.perform(get("/orders/{id}", 99L))
+            .andExpect(status().isNotFound())
+            .andExpect(view().name("error"))
+            .andExpect(model().attribute("errorResponse", instanceOf(ErrorResponse.class)))
+            .andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_HTML))
+            .andExpect(content().string(containsString("Заказ не найден")));
     }
 
     private GetOrderModelDto order(Long id) {
