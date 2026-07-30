@@ -20,6 +20,23 @@ spring:
       schema-locations: classpath:db/schema.sql
       data-locations: classpath:db/data.sql
 
+  security:
+    oauth2:
+      client:
+        registration:
+          payment-service:
+            provider: keycloak
+            client-id: ${PAYMENT_OAUTH_CLIENT_ID:market-app}
+            client-secret: ${PAYMENT_OAUTH_CLIENT_SECRET}
+            client-authentication-method: client_secret_basic
+            authorization-grant-type: client_credentials
+            scope:
+              - payment.read
+              - payment.write
+        provider:
+          keycloak:
+            token-uri: ${PAYMENT_OAUTH_TOKEN_URI:http://localhost:8082/realms/market/protocol/openid-connect/token}
+
 server:
   port: 8080
 
@@ -28,6 +45,7 @@ market:
     base-url: ${PAYMENT_SERVICE_BASE_URL:http://localhost:8081}
     connect-timeout: ${PAYMENT_CONNECT_TIMEOUT:1s}
     response-timeout: ${PAYMENT_RESPONSE_TIMEOUT:2s}
+    retry-delay: ${PAYMENT_RETRY_DELAY:200ms}
   cache:
     products:
       key: market-app:products:v1

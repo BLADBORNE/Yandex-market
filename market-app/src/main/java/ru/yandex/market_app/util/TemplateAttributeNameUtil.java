@@ -29,5 +29,7 @@ public class TemplateAttributeNameUtil {
 
     public final String NEW_ORDER = "newOrder";
 
+    public final String AUTHENTICATED = "authenticated";
+
     public final String ERROR_RESPONSE = "errorResponse";
 }

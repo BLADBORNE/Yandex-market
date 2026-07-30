@@ -1,5 +1,7 @@
 <!DOCTYPE html>
-<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<html lang="ru"
+      xmlns:th="http://www.thymeleaf.org"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
 
 <head>
     <meta charset="utf-8">
@@ -18,6 +20,9 @@
                     </h2>
                     <a href="/orders" class="btn btn-secondary ms-auto bi bi-file-earmark-text"> Заказы</a>
                     <a href="/items" class="btn btn-secondary bi bi-arrow-left-square"> Главная</a>
+                    <form th:action="@{/logout}" method="post">
+                        <button type="submit" class="btn btn-outline-danger bi bi-box-arrow-right"> Выйти</button>
+                    </form>
                 </div>
             </div>
         </div>
@@ -49,7 +54,7 @@
                 <div th:if="${!items.isEmpty()}">
                     <div class="hstack gap-3">
                         <h2 th:text="'Итого: '+${total}+' руб.'"/>
-                        <form action="/buy" method="post" class="ms-auto">
+                        <form th:action="@{/buy}" method="post" class="ms-auto">
                             <button class="btn btn-warning"
                                     th:disabled="${!canBuy}">Купить</button>
                         </form>
