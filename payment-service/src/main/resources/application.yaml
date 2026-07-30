@@ -1,0 +1,13 @@
+spring:
+  application:
+    name: payment-service
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+
+server:
+  port: ${PAYMENT_SERVICE_PORT:8081}
+
+payment:
+  balance:
+    initial: ${PAYMENT_INITIAL_BALANCE:1000000.00}

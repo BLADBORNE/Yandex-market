@@ -1,1 +1,3 @@
-rootProject.name = 'market-app'
+rootProject.name = 'yandex-market'
+
+include 'market-app', 'payment-service'

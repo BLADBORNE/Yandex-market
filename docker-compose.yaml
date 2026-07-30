@@ -1,10 +1,16 @@
 services:
   market-service:
-    build: .
+    build:
+      context: .
+      target: market-app
     ports:
       - "8080:8080"
     depends_on:
       market-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      payment-service:
         condition: service_healthy
     environment:
       HOST: market-db
@@ -12,6 +18,24 @@ services:
       POSTGRES_DB: market_db
       POSTGRES_USER: dev
       POSTGRES_PASSWORD: qwerty
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      PAYMENT_SERVICE_BASE_URL: http://payment-service:8081
+
+  payment-service:
+    build:
+      context: .
+      target: payment-service
+    ports:
+      - "8081:8081"
+    environment:
+      PAYMENT_INITIAL_BALANCE: "1000000.00"
+    healthcheck:
+      test: [ "CMD-SHELL", "wget -q -O - http://localhost:8081/api/v1/balance >/dev/null || exit 1" ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
 
   market-db:
     image: postgres:17.2
@@ -26,16 +50,26 @@ services:
       POSTGRES_PASSWORD: qwerty
       PGDATA: /var/lib/postgresql/data/psqldata
     healthcheck:
-      test: [ CMD-SHELL, pg_isready -U dev -d market_db ]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: [ "CMD-SHELL", "pg_isready -U dev -d market_db" ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
       start_period: 10s
     restart: unless-stopped
     deploy:
       resources:
         limits:
           memory: 4G
+
+  redis:
+    image: redis:7.4-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
 volumes:
   market-app-data-storage:
