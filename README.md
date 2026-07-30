@@ -1,54 +1,76 @@
-# Yandex Market — проект седьмого спринта
+# Yandex Market — проект восьмого спринта
 
-Реактивная витрина интернет-магазина с отдельным RESTful-сервисом платежей и
-Redis-кешем товаров. Оба приложения находятся в одном Gradle-мультипроекте,
-собираются на Java 21 и запускаются на Reactor Netty.
+Реактивная витрина интернет-магазина с авторизацией покупателей, отдельным
+OAuth2-защищённым сервисом платежей и Redis-кешем товаров. Покупатели входят в
+`market-app` по логину и паролю, а `market-app` обращается к `payment-service`
+по OAuth2 Client Credentials через Keycloak.
 
-## Структура проекта
+## Архитектура
+
+В Gradle-мультипроекте остаются ровно два подпроекта:
 
 ```text
 .
-├── market-app/                 # WebFlux + Thymeleaf + R2DBC + Redis
-├── payment-service/            # реактивный JSON API платежей
-├── openapi/payment-api.yaml    # единый контракт интеграции
-├── build.gradle                # общие настройки мультипроекта
-├── settings.gradle             # два подпроекта
-├── Dockerfile                  # образы market-app и payment-service
-└── docker-compose.yaml         # полный стенд приложения
+├── market-app/                 # WebFlux, Thymeleaf, Security, R2DBC, Redis
+├── payment-service/            # WebFlux OAuth2 Resource Server
+├── keycloak/                   # импорт realm для authorization server
+├── openapi/payment-api.yaml    # единый контракт платёжного API
+├── docker-compose.dev.yaml     # Keycloak, PostgreSQL и Redis для bootRun
+├── docker-compose.yaml         # полный стенд
+└── Dockerfile                  # образы двух приложений
 ```
 
-OpenAPI Generator во время каждой чистой сборки создаёт:
-
-- реактивный WebClient-клиент в `market-app/build/generated/openapi`;
-- WebFlux-контроллер и модели в `payment-service/build/generated/openapi`.
-
-Сгенерированные файлы не коммитятся. Реализация market-app использует
-сгенерированный `PaymentsApi`, а payment-service реализует сгенерированный
-`PaymentsApiDelegate`.
+Keycloak является инфраструктурным контейнером, а не третьим Gradle-модулем.
+OpenAPI Generator во время сборки создаёт реактивный `WebClient` для
+`market-app` и WebFlux delegate API для `payment-service`. Сгенерированные
+файлы находятся в `build/generated` и не коммитятся.
 
 ## Стек
 
-- Java 21 и Gradle Wrapper 8.14.4;
-- Spring Boot 3.5, Spring WebFlux, Reactor Netty;
+- Java 21, Gradle Wrapper 8.14.4 и Spring Boot 3.5;
+- Spring WebFlux и Reactor Netty;
+- Spring Security: form login, BCrypt, CSRF и OAuth2;
 - Spring Data R2DBC и PostgreSQL;
-- Spring Data Redis Reactive и Redis;
-- Thymeleaf;
+- Spring Data Redis Reactive;
+- Thymeleaf с Spring Security dialect;
+- Keycloak 26.7.0;
 - OpenAPI 3.0.3 и OpenAPI Generator;
-- JUnit 5, Spring Boot Test, WebTestClient, Reactor Test и Testcontainers.
+- JUnit 5, Spring Boot Test, Spring Security Test, Reactor Test и Testcontainers.
 
 В runtime нет Spring MVC, Servlet API, Spring Data JPA, Hibernate ORM,
-блокирующего JDBC-драйвера или Liquibase.
+JDBC-драйвера или Liquibase.
 
 ## Требования
 
 - JDK 21;
-- Docker с запущенным Docker Engine — для интеграционных тестов и полного стенда.
+- Docker с запущенным Docker Engine;
+- свободные порты `8080`, `8081`, `8082`, `5432` и `6379`.
 
 Локально установленный Gradle не нужен.
 
+## Секреты локального окружения
+
+В репозитории нет рабочего OAuth2 client secret. Создайте локальный `.env`:
+
+```bash
+cp .env.example .env
+```
+
+Замените оба значения в `.env`. Этот файл исключён из Git. Для запуска из
+исходников экспортируйте значения в текущий shell:
+
+```bash
+set -a
+source .env
+set +a
+```
+
+Значения предназначены только для локального стенда. В production следует
+использовать secret manager, TLS и production-режим Keycloak.
+
 ## Тесты и сборка
 
-Чистая генерация OpenAPI и запуск всех unit-, web- и интеграционных тестов:
+Чистая генерация OpenAPI и запуск всех unit-, security- и интеграционных тестов:
 
 ```bash
 ./gradlew clean test
@@ -67,82 +89,233 @@ market-app/build/libs/market-app.jar
 payment-service/build/libs/payment-service.jar
 ```
 
-Интеграционные тесты автоматически поднимают PostgreSQL и Redis через
-Testcontainers. Тесты одного приложения повторно используют Spring-контекст и
-не применяют `@DirtiesContext`; состояние БД, кеша и тестового платёжного шлюза
-очищается между сценариями.
+Интеграционные тесты используют PostgreSQL, Redis и Keycloak в Testcontainers.
+Тесты одного типа переиспользуют Spring-контекст; `@DirtiesContext` не
+используется, а состояние очищается между сценариями.
 
-Покрыты, в частности:
+Проверяются, в частности:
 
-- cache hit/miss, typed JSON-сериализация, TTL, eviction и fallback при ошибке Redis;
-- поиск, сортировка, пагинация и актуальные количества товаров в корзине;
-- generated HTTP-клиент и JSON-контракт payment-service;
-- валидация, недостаток средств, точное списание, конкурентные платежи и
-  идемпотентность;
-- недоступность payment-service, disabled-кнопка покупки и откат заказа при
-  ошибке оплаты;
-- полный поток каталог → корзина → оплата → заказ.
+- вход с BCrypt-паролем, неверный пароль, CSRF и полный logout;
+- доступ анонимного пользователя только к каталогу и карточке товара;
+- отсутствие приватных ссылок и элементов управления в анонимном HTML;
+- независимые корзины, счётчики товаров и заказы Alice и Bob;
+- невозможность открыть заказ другого пользователя по известному ID;
+- получение OAuth2-токена по Client Credentials и Bearer-запрос;
+- `401` без токена, `403` без нужного scope и проверка `iss`, `aud`, `azp`;
+- независимые платёжные балансы и идемпотентность каждого покупателя;
+- задержанный повтор при временной недоступности payment-service;
+- фиксация `PENDING`-заказа до HTTP-вызова и восстановление после двух
+  потерянных ответов без изменения состава корзины;
+- Redis cache hit/miss/TTL/fallback и полный поток покупки.
 
-## Локальный запуск из исходников
+## Полный запуск в Docker
 
-Поднять PostgreSQL и Redis:
-
-```bash
-docker compose -f docker-compose.dev.yaml up -d
-```
-
-В первом терминале запустить сервис платежей:
-
-```bash
-./gradlew :payment-service:bootRun
-```
-
-Во втором терминале запустить витрину:
-
-```bash
-./gradlew :market-app:bootRun
-```
-
-Адреса:
-
-- витрина: [http://localhost:8080/items](http://localhost:8080/items);
-- баланс: [http://localhost:8081/api/v1/balance](http://localhost:8081/api/v1/balance).
-
-Остановка инфраструктуры:
-
-```bash
-docker compose -f docker-compose.dev.yaml down
-```
-
-После `./gradlew clean build` приложения можно запустить как JAR:
-
-```bash
-java -jar payment-service/build/libs/payment-service.jar
-java -jar market-app/build/libs/market-app.jar
-```
-
-## Запуск полного стенда в Docker
-
-Собрать образы и запустить market-app, payment-service, PostgreSQL и Redis:
+После создания `.env`:
 
 ```bash
 docker compose up --build
 ```
 
-Market-app стартует после успешных healthcheck PostgreSQL, Redis и
-payment-service.
+Сервисы:
 
-Остановить контейнеры, сохранив данные PostgreSQL:
+- витрина: [http://localhost:8080/items](http://localhost:8080/items);
+- payment API: `http://localhost:8081/api/v1`;
+- Keycloak: [http://localhost:8082](http://localhost:8082);
+- health payment-service:
+  [http://localhost:8081/actuator/health](http://localhost:8081/actuator/health).
+
+`market-app` стартует только после readiness Keycloak, PostgreSQL, Redis и
+`payment-service`. Health endpoint платежного сервиса открыт, бизнес-эндпоинты
+защищены OAuth2.
+
+Остановка с сохранением PostgreSQL:
 
 ```bash
 docker compose down
 ```
 
-Удалять том следует только когда данные больше не нужны:
+Полная очистка стенда:
 
 ```bash
-docker compose down -v
+docker compose down --volumes --remove-orphans
+./gradlew --stop
 ```
+
+## Запуск приложений из исходников
+
+Поднимите инфраструктуру:
+
+```bash
+docker compose -f docker-compose.dev.yaml up -d
+```
+
+В первом терминале, где загружен `.env`, запустите payment-service:
+
+```bash
+./gradlew :payment-service:bootRun
+```
+
+Во втором терминале с теми же переменными:
+
+```bash
+./gradlew :market-app:bootRun
+```
+
+Для остановки:
+
+```bash
+docker compose -f docker-compose.dev.yaml down
+./gradlew --stop
+```
+
+## Покупатели
+
+Два учебных пользователя загружаются в PostgreSQL идемпотентно:
+
+| Логин | Пароль |
+|---|---|
+| `alice` | `alice123` |
+| `bob` | `bob123` |
+
+В БД сохраняются только BCrypt-хеши с cost factor 12. У пользователя есть
+внутренний числовой ID для корзины и заказов и отдельный неизменяемый UUID
+платёжного счёта.
+
+Анонимный пользователь может открыть только `/`, `/items` и `/items/{id}`.
+Корзина, заказы, изменение количества и покупка защищены одновременно:
+
+- правилами `SecurityWebFilterChain` на сервере;
+- CSRF для изменяющих form-запросов;
+- `sec:authorize` в HTML-шаблонах.
+
+Logout выполняется POST-запросом с CSRF, очищает `SecurityContext`, инвалидирует
+WebSession и удаляет cookie `SESSION`.
+
+## Изоляция данных
+
+Каждая корзина и каждый заказ имеют владельца. Partial unique index допускает
+не более одной открытой корзины (`ACTIVE` или `CHECKOUT`) на пользователя, а
+составной внешний ключ заказа не позволяет связать заказ с чужой корзиной.
+Внешние чтения и переходы состояния выбирают корзины и заказы по `user_id`;
+внутренние операции с позициями получают только уже проверенный `basket_id` или
+`order_id` внутри той же сервисной операции. Составные FK дополнительно
+закрепляют владельца на уровне PostgreSQL.
+
+При обновлении существующего тома седьмого спринта прежние данные сохраняются за
+Alice. Дедупликация старых активных корзин выполняется отдельно внутри каждого
+пользователя.
+
+Общий Redis snapshot содержит только данные товара. Количество товара в корзине
+не кешируется и читается из PostgreSQL отдельно для текущего пользователя;
+анонимный каталог всегда получает количество `0`.
+
+## OAuth2 и платёжные счета
+
+В Keycloak зарегистрированы:
+
+- confidential client `market-app` с service account;
+- resource client `payment-service`;
+- scopes `payment.read` и `payment.write`;
+- audience `payment-service`.
+
+`payment-service` проверяет подпись JWT, срок действия, точный issuer, audience,
+authorized party `market-app` и нужный scope. `GET /balance` требует
+`payment.read`, а `POST /payment` — `payment.write`.
+
+Client Credentials удостоверяет приложение, а не вошедшего покупателя. Поэтому
+`market-app` берёт UUID счёта только из серверного authenticated principal и
+передаёт его в обязательном заголовке `X-Customer-Id`. Этот идентификатор не
+принимается из HTML form или query-параметра. `payment-service` доверяет
+заголовку только после успешной проверки токена `market-app`.
+
+В Docker Keycloak публикует canonical issuer
+`http://localhost:8082/realms/market`. Приложения получают токен и JWK по
+внутренним Docker-адресам, но проверяют стабильное значение `iss`, поэтому
+токены одинаково работают через полный стенд и при ручной проверке с хоста.
+
+## Ручная проверка payment API
+
+Загрузите `.env`, затем получите токен:
+
+```bash
+TOKEN="$(
+  curl --fail --silent \
+    -u "market-app:${PAYMENT_OAUTH_CLIENT_SECRET}" \
+    -d grant_type=client_credentials \
+    -d 'scope=payment.read payment.write' \
+    http://localhost:8082/realms/market/protocol/openid-connect/token |
+  python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])'
+)"
+```
+
+Без токена API вернёт `401`:
+
+```bash
+curl -i \
+  -H 'X-Customer-Id: 85a65fde-0492-4dcf-b1f4-dbc8f901ae72' \
+  http://localhost:8081/api/v1/balance
+```
+
+Баланс Alice с токеном:
+
+```bash
+curl --fail \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -H 'X-Customer-Id: 85a65fde-0492-4dcf-b1f4-dbc8f901ae72' \
+  http://localhost:8081/api/v1/balance
+```
+
+Пример платежа:
+
+```bash
+curl --fail -X POST \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -H 'X-Customer-Id: 85a65fde-0492-4dcf-b1f4-dbc8f901ae72' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "requestId": "d989189e-0e6d-4e3d-9792-673629702050",
+    "amount": 1499.90
+  }' \
+  http://localhost:8081/api/v1/payment
+```
+
+Баланс хранится отдельно для каждого UUID в копейках в `AtomicLong`. CAS не
+позволяет уйти в минус при конкуренции. Идемпотентность определяется парой
+`(customerId, requestId)`: повтор той же суммы не списывает деньги второй раз,
+а повтор с другой суммой возвращает `409 IDEMPOTENCY_CONFLICT`.
+
+## Оформление заказа
+
+Checkout разделён на короткие транзакции и сетевой этап:
+
+1. `market-app` блокирует `ACTIVE`-корзину, сохраняет `PENDING`-заказ, неизменный
+   snapshot, сумму, UUID платёжного счёта и случайный `payment_request_id`, затем
+   переводит корзину в `CHECKOUT` и фиксирует транзакцию.
+   Итоговая сумма вычисляется из сохранённого snapshot, поэтому она не расходится
+   с позициями при конкурентном изменении цены товара.
+2. Одна из конкурентных попыток атомарно получает ограниченную по времени
+   платёжную аренду. OAuth2-защищённый HTTP-платёж выполняется уже без открытой
+   DB-транзакции; остальные одновременные `/buy` не отправляют второй запрос.
+3. После подтверждения отдельная короткая транзакция переводит заказ в
+   `COMPLETED`, а корзину — в `CLOSED`. Только такие заказы видны в истории.
+
+При временной транспортной ошибке выполняется одна неблокирующая повторная
+попытка с задержкой `PAYMENT_RETRY_DELAY`. Если оба ответа потеряны,
+`PENDING`/`CHECKOUT` сохраняются: корзина остаётся видимой, но её состав нельзя
+изменить, а следующий `/buy` повторяет исходную сумму с тем же ключом
+идемпотентности. Однозначный отказ — недостаток средств, ошибка валидации или
+OAuth2 — удаляет ожидающий заказ и возвращает корзину в `ACTIVE`, только если до
+него не было неоднозначной попытки; новая покупка получает новый ключ. После
+потерянного ответа сохраняется признак возможного обращения к payment-service,
+поэтому даже последующий однозначный отказ не удаляет прежний платёжный intent
+до сверки. `IDEMPOTENCY_CONFLICT` также считается неопределённым результатом и
+не размораживает корзину автоматически. Если процесс аварийно завершился,
+просроченную платёжную аренду может безопасно забрать следующая попытка; её срок
+вычисляется только по часам PostgreSQL.
+
+Состояние payment-service хранится в памяти одного экземпляра и возвращается к
+начальному значению после перезапуска. Для production понадобились бы
+персистентный ledger и saga/outbox.
 
 ## Конфигурация
 
@@ -150,117 +323,48 @@ docker compose down -v
 
 | Переменная | По умолчанию | Назначение |
 |---|---:|---|
-| `HOST` | `localhost` | адрес PostgreSQL |
-| `PORT` | `5432` | порт PostgreSQL |
-| `POSTGRES_DB` | `market_db` | имя базы |
+| `HOST` | `localhost` | PostgreSQL host |
+| `PORT` | `5432` | PostgreSQL port |
+| `POSTGRES_DB` | `market_db` | имя БД |
 | `POSTGRES_USER` | `dev` | пользователь БД |
 | `POSTGRES_PASSWORD` | `qwerty` | пароль БД |
-| `REDIS_HOST` | `localhost` | адрес Redis |
-| `REDIS_PORT` | `6379` | порт Redis |
-| `REDIS_CONNECT_TIMEOUT` | `1s` | таймаут подключения к Redis |
-| `REDIS_TIMEOUT` | `1s` | таймаут команды Redis |
-| `PRODUCT_CACHE_TTL` | `2m` | время жизни каталога в кеше |
-| `PAYMENT_SERVICE_BASE_URL` | `http://localhost:8081` | URL payment-service |
-| `PAYMENT_CONNECT_TIMEOUT` | `1s` | таймаут подключения к payment-service |
-| `PAYMENT_RESPONSE_TIMEOUT` | `2s` | таймаут ответа payment-service |
+| `REDIS_HOST` | `localhost` | Redis host |
+| `REDIS_PORT` | `6379` | Redis port |
+| `PRODUCT_CACHE_TTL` | `2m` | TTL каталога |
+| `PAYMENT_SERVICE_BASE_URL` | `http://localhost:8081` | payment-service URL |
+| `PAYMENT_CONNECT_TIMEOUT` | `1s` | connect timeout |
+| `PAYMENT_RESPONSE_TIMEOUT` | `2s` | response timeout |
+| `PAYMENT_RETRY_DELAY` | `200ms` | задержка единственного повтора |
+| `PAYMENT_OAUTH_TOKEN_URI` | Keycloak на `localhost:8082` | token endpoint |
+| `PAYMENT_OAUTH_CLIENT_ID` | `market-app` | OAuth2 client ID |
+| `PAYMENT_OAUTH_CLIENT_SECRET` | обязательна | OAuth2 client secret |
 
 ### Payment-service
 
 | Переменная | По умолчанию | Назначение |
 |---|---:|---|
 | `PAYMENT_SERVICE_PORT` | `8081` | HTTP-порт |
-| `PAYMENT_INITIAL_BALANCE` | `1000000.00` | начальный баланс |
+| `PAYMENT_INITIAL_BALANCE` | `1000000.00` | начальный баланс каждого счёта |
+| `PAYMENT_OAUTH_ISSUER_URI` | Keycloak на `localhost:8082` | допустимый issuer |
+| `PAYMENT_OAUTH_JWK_SET_URI` | Keycloak на `localhost:8082` | JWK endpoint |
+| `PAYMENT_OAUTH_AUDIENCE` | `payment-service` | обязательный audience |
+| `PAYMENT_OAUTH_AUTHORIZED_CLIENT_ID` | `market-app` | обязательный `azp` |
 
-Начальный баланс должен быть неотрицательным и содержать не более двух знаков
-после запятой.
+Начальный баланс должен быть неотрицательным и иметь не более двух знаков после
+запятой. Все таймауты и задержка повтора должны быть положительными.
 
-## Redis-кеш товаров
+## Web-маршруты
 
-Каталог хранится под ключом `market-app:products:v1` как typed JSON snapshot с
-TTL две минуты. Кешируются `id`, путь к изображению, название, описание и цена.
-Количество товара в корзине не кешируется: оно всегда читается из PostgreSQL и
-объединяется с данными каталога.
-
-Один snapshot используется для:
-
-- списка товаров, после чего в Java применяются поиск, стабильная сортировка и
-  пагинация;
-- карточки товара;
-- наполнения строк корзины актуальными описанием и ценой.
-
-При cache miss каталог читается из PostgreSQL и записывается в Redis. Если Redis
-недоступен, запрос продолжает работать с данными БД без повторной попытки записи
-в рамках того же запроса; ошибки БД при этом не маскируются. Для очистки
-используется только точный ключ, без `KEYS` и `FLUSHDB`.
-
-Исходный список товаров загружается из
-`market-app/src/main/resources/db/data.sql`. Схема создаётся скриптом
-`market-app/src/main/resources/db/schema.sql`.
-
-## Платежи и оформление заказа
-
-OpenAPI-контракт находится в `openapi/payment-api.yaml`.
-
-| Метод | Маршрут | Назначение |
-|---|---|---|
-| `GET` | `/api/v1/balance` | получить текущий баланс |
-| `POST` | `/api/v1/payment` | списать сумму |
-
-Пример платежа:
-
-```bash
-curl -X POST http://localhost:8081/api/v1/payment \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "requestId": "d989189e-0e6d-4e3d-9792-673629702050",
-    "amount": 1499.90
-  }'
-```
-
-Баланс хранится в копейках в `AtomicLong`. CAS-списание не позволяет уйти в
-минус даже при конкурентных запросах. `requestId` является ключом
-идемпотентности: повтор с той же суммой не списывает деньги ещё раз, а повтор с
-другой суммой возвращает `409 IDEMPOTENCY_CONFLICT`.
-
-JSON-запросы валидируются строго: обязательные поля, положительная сумма с
-точностью до копейки и отсутствие неизвестных полей. Market-app дополнительно
-проверяет, что `requestId` и сумма успешного ответа совпадают с отправленным
-запросом.
-
-На странице корзины кнопка покупки доступна только при достаточном балансе.
-Недостаток средств и недоступность payment-service показываются как разные
-состояния. `POST /buy` всегда выполняет серверный платёж повторно, поэтому
-проверка кнопки не является единственной защитой.
-
-Во время checkout активная корзина блокируется в реактивной R2DBC-транзакции,
-создаются заказ и снимок позиций, затем выполняется идемпотентный платёж. Ошибка
-платежа откатывает заказ и оставляет корзину активной. При неоднозначной
-транспортной ошибке выполняется одна подтверждающая попытка с тем же
-`requestId`. Если платёж уже подтверждён, а локальная транзакция завершилась
-ошибкой, market-app проверяет, не был ли заказ зафиксирован, и при необходимости
-один раз повторяет локальный checkout с тем же ключом идемпотентности.
-
-Payment-service хранит баланс и таблицу идемпотентности в памяти одного
-экземпляра. После его перезапуска состояние возвращается к значению из
-конфигурации. Для учебного задания это выбранная модель; production-вариант
-потребовал бы персистентный платёжный ledger и saga/outbox, чтобы полностью
-устранить неопределённость при одновременной потере обоих ответов на
-идемпотентные запросы или перезапуске payment-service.
-
-## Web-маршруты market-app
-
-| Метод | Маршрут | Назначение |
-|---|---|---|
-| `GET` | `/` или `/items` | витрина, поиск, сортировка и пагинация |
-| `POST` | `/items` | изменить количество товара из витрины |
-| `GET` | `/items/{id}` | карточка товара |
-| `POST` | `/items/{id}` | изменить количество из карточки |
-| `GET` | `/cart/items` | корзина, баланс и возможность оплаты |
-| `POST` | `/cart/items` | увеличить, уменьшить или удалить товар |
-| `POST` | `/buy` | оплатить и оформить активную корзину |
-| `GET` | `/orders` | история заказов |
-| `GET` | `/orders/{id}` | страница заказа |
+| Метод | Маршрут | Доступ | Назначение |
+|---|---|---|---|
+| `GET` | `/`, `/items` | все | каталог, поиск, сортировка, пагинация |
+| `GET` | `/items/{id}` | все | карточка товара |
+| `POST` | `/items`, `/items/{id}` | пользователь | изменить количество |
+| `GET`, `POST` | `/cart/items` | пользователь | корзина и её изменение |
+| `POST` | `/buy` | пользователь | оплатить и оформить корзину |
+| `GET` | `/orders`, `/orders/{id}` | пользователь | собственные заказы |
+| `POST` | `/logout` | пользователь | полный logout |
 
 Параметр `action` принимает `PLUS`, `MINUS` или `DELETE`; `DELETE` разрешён
-только на странице корзины. Витрина поддерживает сортировки `NO`, `ALPHA`,
+только на странице корзины. Каталог поддерживает сортировки `NO`, `ALPHA`,
 `PRICE` и размеры страницы 2, 5, 10, 20, 50 и 100.
