@@ -79,6 +79,17 @@ public class PostgreTestContainer {
             payment.set((accountId, requestId, amount) -> Mono.error(exception));
         }
 
+        public void failFirstPaymentThen(
+            RuntimeException firstException,
+            RuntimeException subsequentException
+        ) {
+            var invocation = new AtomicInteger();
+            payment.set((accountId, requestId, amount) ->
+                Mono.error(invocation.getAndIncrement() == 0
+                    ? firstException
+                    : subsequentException));
+        }
+
         public void loseNextPaymentResponses(int attempts, RuntimeException exception) {
             var remainingLostResponses = new AtomicInteger(attempts);
             payment.set((accountId, requestId, amount) ->

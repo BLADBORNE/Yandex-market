@@ -199,6 +199,77 @@ class OrderServiceIntegrationTest extends ReactiveIntegrationTestSupport {
     }
 
     @Test
+    void shouldRestoreCartWhenRetryReportsInsufficientFundsAfterTimeout() {
+        var unavailable = new PaymentServiceUnavailableException("response timeout");
+        var insufficientFunds = new InsufficientFundsException(
+            BigDecimal.ZERO,
+            FIRST_PRODUCT_PRICE
+        );
+
+        var scenario = resetDatabase()
+            .then(basketService.changeProductCountFromStartPage(ALICE_ID, 1L, PLUS))
+            .then(Mono.fromRunnable(() ->
+                testPaymentGateway.failFirstPaymentThen(unavailable, insufficientFunds)))
+            .then(orderService.completeOrder(ALICE_ID, ALICE_PAYMENT_ACCOUNT).materialize())
+            .flatMap(paymentSignal -> basketService
+                .changeProductCountFromStartPage(ALICE_ID, 2L, PLUS)
+                .then(Mono.zip(
+                    Mono.just(paymentSignal),
+                    basketService.getCart(ALICE_ID),
+                    orderService.getOrders(ALICE_ID)
+                )));
+
+        StepVerifier.create(scenario)
+            .assertNext(result -> {
+                assertTrue(result.getT1().isOnError());
+                assertEquals(insufficientFunds, result.getT1().getThrowable());
+                assertEquals(2, result.getT2().items().size());
+                assertTrue(result.getT3().orders().isEmpty());
+                assertEquals(2, testPaymentGateway.requestIds().size());
+                assertEquals(1, Set.copyOf(testPaymentGateway.requestIds()).size());
+            })
+            .verifyComplete();
+    }
+
+    @Test
+    void shouldRestoreCartWhenPreviouslyAttemptedPaymentReportsInsufficientFunds() {
+        var unavailable = new PaymentServiceUnavailableException("response timeout");
+        var insufficientFunds = new InsufficientFundsException(
+            BigDecimal.ZERO,
+            FIRST_PRODUCT_PRICE
+        );
+
+        var scenario = resetDatabase()
+            .then(basketService.changeProductCountFromStartPage(ALICE_ID, 1L, PLUS))
+            .then(Mono.fromRunnable(() -> testPaymentGateway.failPayment(unavailable)))
+            .then(orderService.completeOrder(ALICE_ID, ALICE_PAYMENT_ACCOUNT).materialize())
+            .doOnNext(firstAttempt -> {
+                assertTrue(firstAttempt.isOnError());
+                assertTrue(firstAttempt.getThrowable() instanceof PaymentServiceUnavailableException);
+            })
+            .then(Mono.fromRunnable(() -> testPaymentGateway.failPayment(insufficientFunds)))
+            .then(orderService.completeOrder(ALICE_ID, ALICE_PAYMENT_ACCOUNT).materialize())
+            .flatMap(secondAttempt -> basketService
+                .changeProductCountFromStartPage(ALICE_ID, 2L, PLUS)
+                .then(Mono.zip(
+                    Mono.just(secondAttempt),
+                    basketService.getCart(ALICE_ID),
+                    orderService.getOrders(ALICE_ID)
+                )));
+
+        StepVerifier.create(scenario)
+            .assertNext(result -> {
+                assertTrue(result.getT1().isOnError());
+                assertEquals(insufficientFunds, result.getT1().getThrowable());
+                assertEquals(2, result.getT2().items().size());
+                assertTrue(result.getT3().orders().isEmpty());
+                assertEquals(3, testPaymentGateway.requestIds().size());
+                assertEquals(1, Set.copyOf(testPaymentGateway.requestIds()).size());
+            })
+            .verifyComplete();
+    }
+
+    @Test
     void shouldCreateNewPaymentKeyAfterDefinitiveRejectionAndCartEdit() {
         var paymentError = new InsufficientFundsException(
             BigDecimal.ZERO,

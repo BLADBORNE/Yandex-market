@@ -158,10 +158,10 @@ public class OrderServiceImpl implements OrderService {
                         order.getPaymentRequestId(),
                         order.getSum()
                     )))
-                    .onErrorMap(secondError -> ambiguousPaymentFailure(
-                        firstError,
-                        secondError
-                    )));
+                    .onErrorMap(
+                        secondError -> !(secondError instanceof InsufficientFundsException),
+                        secondError -> ambiguousPaymentFailure(firstError, secondError)
+                    ));
     }
 
     private Mono<PaymentReceipt> handlePaymentFailure(
@@ -170,7 +170,7 @@ public class OrderServiceImpl implements OrderService {
         UUID attemptId,
         Throwable error
     ) {
-        if (isDefinitiveRejection(error) && !order.isPaymentAttempted()) {
+        if (canSafelyCancelCheckout(error, order.isPaymentAttempted())) {
             return cancelCheckout(userId, order, attemptId)
                 .as(transactionalOperator::transactional)
                 .then(Mono.error(error));
@@ -291,9 +291,12 @@ public class OrderServiceImpl implements OrderService {
             });
     }
 
-    private boolean isDefinitiveRejection(Throwable error) {
+    private boolean canSafelyCancelCheckout(
+        Throwable error,
+        boolean paymentPreviouslyAttempted
+    ) {
         return error instanceof InsufficientFundsException
-            || error instanceof PaymentRejectedException;
+            || error instanceof PaymentRejectedException && !paymentPreviouslyAttempted;
     }
 
     private Throwable ambiguousPaymentFailure(

@@ -13,6 +13,7 @@ import ru.yandex.market_app.configuration.PaymentClientProperties;
 import ru.yandex.market_app.mapper.MarketMapper;
 import ru.yandex.market_app.model.Basket;
 import ru.yandex.market_app.model.Order;
+import ru.yandex.market_app.payment.InsufficientFundsException;
 import ru.yandex.market_app.payment.PaymentGateway;
 import ru.yandex.market_app.payment.PaymentReceipt;
 import ru.yandex.market_app.payment.PaymentRejectedException;
@@ -244,6 +245,53 @@ class OrderServiceImplTest {
     }
 
     @Test
+    void shouldCancelCheckoutWhenRetryReportsInsufficientFundsAfterTimeout() {
+        Order pendingOrder = pendingOrder();
+        var insufficientFunds = new InsufficientFundsException(
+            BigDecimal.ZERO,
+            TOTAL
+        );
+
+        when(orderRepository.findPendingByUserId(USER_ID)).thenReturn(Mono.just(pendingOrder));
+        when(orderRepository.claimPayment(
+            eq(ORDER_ID),
+            eq(USER_ID),
+            any(UUID.class),
+            anyLong()
+        )).thenReturn(Mono.just(new PaymentClaim(false)));
+        when(paymentGateway.pay(PAYMENT_ACCOUNT_ID, REQUEST_ID, TOTAL))
+            .thenReturn(Mono.error(new PaymentServiceUnavailableException("response timeout")))
+            .thenReturn(Mono.error(insufficientFunds));
+        when(basketRepository.findCheckoutBasketByIdForUpdate(USER_ID, BASKET_ID))
+            .thenReturn(Mono.just(basket(Basket.Status.CHECKOUT)));
+        when(orderRepository.deletePending(
+            eq(ORDER_ID),
+            eq(USER_ID),
+            any(UUID.class)
+        )).thenReturn(Mono.just(true));
+        when(basketRepository.restoreActive(USER_ID, BASKET_ID)).thenReturn(Mono.just(true));
+
+        StepVerifier.withVirtualTime(() -> orderService.completeOrder(USER_ID, PAYMENT_ACCOUNT_ID))
+            .expectSubscription()
+            .thenAwait(RETRY_DELAY)
+            .expectErrorMatches(error -> error == insufficientFunds)
+            .verify();
+
+        verify(paymentGateway, times(2)).pay(PAYMENT_ACCOUNT_ID, REQUEST_ID, TOTAL);
+        verify(orderRepository).deletePending(
+            eq(ORDER_ID),
+            eq(USER_ID),
+            any(UUID.class)
+        );
+        verify(basketRepository).restoreActive(USER_ID, BASKET_ID);
+        verify(orderRepository, never()).releasePaymentClaim(
+            any(Long.class),
+            any(Long.class),
+            any(UUID.class)
+        );
+    }
+
+    @Test
     void shouldCancelPendingCheckoutWithoutRetryAfterDefinitiveRejection() {
         Order pendingOrder = pendingOrder();
         var paymentError = new PaymentRejectedException("forbidden");
@@ -316,6 +364,49 @@ class OrderServiceImplTest {
             any(UUID.class)
         );
         verify(basketRepository, never()).restoreActive(any(Long.class), any(Long.class));
+    }
+
+    @Test
+    void shouldCancelPreviouslyAmbiguousCheckoutWhenPaymentReportsInsufficientFunds() {
+        Order stalePendingOrder = pendingOrder();
+        var insufficientFunds = new InsufficientFundsException(
+            BigDecimal.ZERO,
+            TOTAL
+        );
+
+        when(orderRepository.findPendingByUserId(USER_ID)).thenReturn(Mono.just(stalePendingOrder));
+        when(orderRepository.claimPayment(
+            eq(ORDER_ID),
+            eq(USER_ID),
+            any(UUID.class),
+            anyLong()
+        )).thenReturn(Mono.just(new PaymentClaim(true)));
+        when(paymentGateway.pay(PAYMENT_ACCOUNT_ID, REQUEST_ID, TOTAL))
+            .thenReturn(Mono.error(insufficientFunds));
+        when(basketRepository.findCheckoutBasketByIdForUpdate(USER_ID, BASKET_ID))
+            .thenReturn(Mono.just(basket(Basket.Status.CHECKOUT)));
+        when(orderRepository.deletePending(
+            eq(ORDER_ID),
+            eq(USER_ID),
+            any(UUID.class)
+        )).thenReturn(Mono.just(true));
+        when(basketRepository.restoreActive(USER_ID, BASKET_ID)).thenReturn(Mono.just(true));
+
+        StepVerifier.create(orderService.completeOrder(USER_ID, PAYMENT_ACCOUNT_ID))
+            .expectErrorMatches(error -> error == insufficientFunds)
+            .verify();
+
+        verify(orderRepository).deletePending(
+            eq(ORDER_ID),
+            eq(USER_ID),
+            any(UUID.class)
+        );
+        verify(basketRepository).restoreActive(USER_ID, BASKET_ID);
+        verify(orderRepository, never()).releasePaymentClaim(
+            any(Long.class),
+            any(Long.class),
+            any(UUID.class)
+        );
     }
 
     @Test
