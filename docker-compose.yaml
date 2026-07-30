@@ -64,11 +64,9 @@ services:
       KC_HOSTNAME: http://localhost:8082
       PAYMENT_OAUTH_CLIENT_SECRET: ${PAYMENT_OAUTH_CLIENT_SECRET:?Set PAYMENT_OAUTH_CLIENT_SECRET}
     healthcheck:
-      test:
-        - CMD-SHELL
-        - >-
-          bash -c "{ printf 'HEAD /health/ready HTTP/1.0\r\n\r\n' >&0;
-          grep 'HTTP/1.0 200'; } 0<>/dev/tcp/localhost/9000"
+      test: >-
+        bash -c "{ printf 'HEAD /health/ready HTTP/1.0\r\n\r\n' >&0;
+        grep 'HTTP/1.0 200'; } 0<>/dev/tcp/localhost/9000"
       interval: 5s
       timeout: 3s
       retries: 30
