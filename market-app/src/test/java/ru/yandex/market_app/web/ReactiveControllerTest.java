@@ -21,6 +21,9 @@ import ru.yandex.market_app.dto.ProductResultDto;
 import ru.yandex.market_app.exception.ItemNotFoundException;
 import ru.yandex.market_app.exception.NotRemoveItemException;
 import ru.yandex.market_app.exception.OperationNotSupportedException;
+import ru.yandex.market_app.payment.InsufficientFundsException;
+import ru.yandex.market_app.payment.PaymentGateway;
+import ru.yandex.market_app.payment.PaymentServiceUnavailableException;
 import ru.yandex.market_app.service.BasketService;
 import ru.yandex.market_app.service.OrderService;
 import ru.yandex.market_app.service.ProductService;
@@ -61,6 +64,9 @@ class ReactiveControllerTest {
 
     @MockitoBean
     private OrderService orderService;
+
+    @MockitoBean
+    private PaymentGateway paymentGateway;
 
     @Test
     void shouldRenderCatalogAndMapPagingParameters() {
@@ -249,6 +255,7 @@ class ReactiveControllerTest {
         when(basketService.getCart())
             .thenReturn(Mono.just(before))
             .thenReturn(Mono.just(after));
+        when(paymentGateway.getBalance()).thenReturn(Mono.just(BigDecimal.valueOf(100_000)));
         when(basketService.changeProductCountFromCartPage(3L, PLUS)).thenReturn(Mono.empty());
 
         webTestClient.get()
@@ -291,6 +298,45 @@ class ReactiveControllerTest {
             .value(body -> {
                 assertTrue(!body.contains("action=\"/buy\""));
                 assertTrue(!body.contains(">Купить<"));
+            });
+    }
+
+    @Test
+    void shouldDisableCheckoutAndExplainInsufficientFunds() {
+        when(basketService.getCart()).thenReturn(Mono.just(
+            cart(product(3L, "Монитор", 1), BigDecimal.valueOf(2000))
+        ));
+        when(paymentGateway.getBalance()).thenReturn(Mono.just(BigDecimal.valueOf(1000)));
+
+        webTestClient.get()
+            .uri("/cart/items")
+            .exchange()
+            .expectStatus().isOk()
+            .expectBody(String.class)
+            .value(body -> {
+                assertTrue(body.contains("Недостаточно средств"));
+                assertTrue(body.contains("доступно 1000"));
+                assertTrue(body.contains("disabled"));
+            });
+    }
+
+    @Test
+    void shouldDisableCheckoutWhenPaymentServiceIsUnavailable() {
+        when(basketService.getCart()).thenReturn(Mono.just(
+            cart(product(3L, "Монитор", 1), BigDecimal.valueOf(2000))
+        ));
+        when(paymentGateway.getBalance()).thenReturn(Mono.error(
+            new PaymentServiceUnavailableException("offline")
+        ));
+
+        webTestClient.get()
+            .uri("/cart/items")
+            .exchange()
+            .expectStatus().isOk()
+            .expectBody(String.class)
+            .value(body -> {
+                assertTrue(body.contains("Сервис платежей недоступен"));
+                assertTrue(body.contains("disabled"));
             });
     }
 
@@ -370,6 +416,34 @@ class ReactiveControllerTest {
             .expectHeader().valueEquals("Location", "/orders/42?newOrder=true");
 
         verify(orderService).completeOrder();
+    }
+
+    @Test
+    void shouldReturnToCartWhenPaymentFails() {
+        when(orderService.completeOrder())
+            .thenReturn(Mono.error(new InsufficientFundsException(
+                BigDecimal.valueOf(500),
+                BigDecimal.valueOf(1000)
+            )))
+            .thenReturn(Mono.error(new PaymentServiceUnavailableException("offline")));
+
+        webTestClient.post()
+            .uri("/buy")
+            .exchange()
+            .expectStatus().is3xxRedirection()
+            .expectHeader().valueEquals(
+                "Location",
+                "/cart/items?paymentError=INSUFFICIENT_FUNDS"
+            );
+
+        webTestClient.post()
+            .uri("/buy")
+            .exchange()
+            .expectStatus().is3xxRedirection()
+            .expectHeader().valueEquals(
+                "Location",
+                "/cart/items?paymentError=SERVICE_UNAVAILABLE"
+            );
     }
 
     private ProductResultDto product(Long id, String title, Integer count) {

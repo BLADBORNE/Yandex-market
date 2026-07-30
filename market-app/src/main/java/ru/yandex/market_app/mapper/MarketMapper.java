@@ -1,8 +1,8 @@
 package ru.yandex.market_app.mapper;
 
 import org.springframework.stereotype.Component;
+import ru.yandex.market_app.cache.CachedProduct;
 import ru.yandex.market_app.dto.GetOrderModelDto;
-import ru.yandex.market_app.dto.ProductCartResultDto;
 import ru.yandex.market_app.dto.ProductResultDto;
 import ru.yandex.market_app.model.Order;
 import ru.yandex.market_app.model.Product;
@@ -23,14 +23,14 @@ public final class MarketMapper {
             .build();
     }
 
-    public ProductResultDto toProductResultDto(ProductCartResultDto product) {
+    public ProductResultDto toProductResultDto(CachedProduct product, int count) {
         return ProductResultDto.builder()
             .id(product.id())
             .title(product.title())
             .description(product.description())
             .imgPath(product.imgPath())
             .price(product.price())
-            .count(product.count())
+            .count(count)
             .build();
     }
 

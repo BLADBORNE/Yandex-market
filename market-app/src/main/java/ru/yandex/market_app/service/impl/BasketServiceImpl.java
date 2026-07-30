@@ -7,6 +7,7 @@ import org.springframework.transaction.annotation.Transactional;
 import reactor.core.publisher.Mono;
 import ru.yandex.market_app.dto.BasketDto;
 import ru.yandex.market_app.dto.GetProductCartModelDto;
+import ru.yandex.market_app.dto.ProductCount;
 import ru.yandex.market_app.dto.ProductResultDto;
 import ru.yandex.market_app.exception.NotRemoveItemException;
 import ru.yandex.market_app.exception.OperationNotSupportedException;
@@ -18,9 +19,14 @@ import ru.yandex.market_app.repository.BasketProductRepository;
 import ru.yandex.market_app.repository.BasketRepository;
 import ru.yandex.market_app.repository.ProductRepository;
 import ru.yandex.market_app.service.BasketService;
+import ru.yandex.market_app.service.ProductCatalogProvider;
 
 import java.math.BigDecimal;
+import java.util.Comparator;
+import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import static ru.yandex.market_app.model.ProductAction.DELETE;
 import static ru.yandex.market_app.model.ProductAction.MINUS;
@@ -33,6 +39,7 @@ public class BasketServiceImpl implements BasketService {
     private final BasketRepository basketRepository;
     private final BasketProductRepository basketProductRepository;
     private final ProductRepository productRepository;
+    private final ProductCatalogProvider productCatalogProvider;
     private final MarketMapper marketMapper;
 
     @Transactional
@@ -56,13 +63,43 @@ public class BasketServiceImpl implements BasketService {
         return performChangeProductCount(id, productAction).then();
     }
 
-    @Transactional(readOnly = true)
     @Override
     public Mono<GetProductCartModelDto> getCart() {
-        return productRepository.findActiveCartItems()
-            .map(marketMapper::toProductResultDto)
+        return basketProductRepository.findActiveProductCounts()
             .collectList()
-            .map(items -> {
+            .flatMap(this::hydrateCart);
+    }
+
+    private Mono<GetProductCartModelDto> hydrateCart(java.util.List<ProductCount> counts) {
+        if (counts.isEmpty()) {
+            return Mono.just(GetProductCartModelDto.builder()
+                .items(java.util.List.of())
+                .total(BigDecimal.ZERO)
+                .build());
+        }
+
+        var productIds = counts.stream()
+            .map(ProductCount::productId)
+            .collect(Collectors.toSet());
+
+        return productCatalogProvider.getCatalogContaining(productIds)
+            .map(catalog -> {
+                Map<Long, ru.yandex.market_app.cache.CachedProduct> productsById = catalog.products().stream()
+                    .collect(Collectors.toMap(ru.yandex.market_app.cache.CachedProduct::id, Function.identity()));
+
+                var items = counts.stream()
+                    .map(count -> {
+                        var product = productsById.get(count.productId());
+                        if (product == null) {
+                            throw new IllegalStateException(
+                                "Товар корзины с id %d не найден в каталоге".formatted(count.productId())
+                            );
+                        }
+                        return marketMapper.toProductResultDto(product, count.count());
+                    })
+                    .sorted(Comparator.comparing(ProductResultDto::title).thenComparing(ProductResultDto::id))
+                    .toList();
+
                 BigDecimal total = items.stream()
                     .map(item -> item.price().multiply(BigDecimal.valueOf(item.count())))
                     .reduce(BigDecimal.ZERO, BigDecimal::add);

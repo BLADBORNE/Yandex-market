@@ -7,6 +7,13 @@ spring:
     username: ${POSTGRES_USER:dev}
     password: ${POSTGRES_PASSWORD:qwerty}
 
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      connect-timeout: ${REDIS_CONNECT_TIMEOUT:1s}
+      timeout: ${REDIS_TIMEOUT:1s}
+
   sql:
     init:
       mode: always
@@ -15,6 +22,16 @@ spring:
 
 server:
   port: 8080
+
+market:
+  payment-service:
+    base-url: ${PAYMENT_SERVICE_BASE_URL:http://localhost:8081}
+    connect-timeout: ${PAYMENT_CONNECT_TIMEOUT:1s}
+    response-timeout: ${PAYMENT_RESPONSE_TIMEOUT:2s}
+  cache:
+    products:
+      key: market-app:products:v1
+      ttl: ${PRODUCT_CACHE_TTL:2m}
 
 logging:
   file:

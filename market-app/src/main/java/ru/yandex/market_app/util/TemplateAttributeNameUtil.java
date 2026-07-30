@@ -17,6 +17,12 @@ public class TemplateAttributeNameUtil {
 
     public final String TOTAL = "total";
 
+    public final String CAN_BUY = "canBuy";
+
+    public final String PAYMENT_MESSAGE = "paymentMessage";
+
+    public final String PAYMENT_STATUS = "paymentStatus";
+
     public final String ORDERS = "orders";
 
     public final String ORDER = "order";

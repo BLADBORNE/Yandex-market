@@ -46,12 +46,20 @@
         </div>
         <div class="row p-2">
             <div class="col">
-                <form action="/buy" method="post" th:if="${!items.isEmpty()}">
+                <div th:if="${!items.isEmpty()}">
                     <div class="hstack gap-3">
                         <h2 th:text="'Итого: '+${total}+' руб.'"/>
-                        <button class="btn btn-warning ms-auto">Купить</button>
+                        <form action="/buy" method="post" class="ms-auto">
+                            <button class="btn btn-warning"
+                                    th:disabled="${!canBuy}">Купить</button>
+                        </form>
                     </div>
-                </form>
+                    <div class="alert mt-3"
+                         th:if="${paymentMessage != null}"
+                         th:classappend="${canBuy} ? 'alert-success' : 'alert-warning'"
+                         th:text="${paymentMessage}">
+                    </div>
+                </div>
             </div>
         </div>
     </div>

@@ -8,6 +8,8 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import reactor.core.publisher.Mono;
+import ru.yandex.market_app.payment.InsufficientFundsException;
+import ru.yandex.market_app.payment.PaymentServiceUnavailableException;
 import ru.yandex.market_app.service.OrderService;
 import ru.yandex.market_app.util.RedirectUrlUtil;
 import ru.yandex.market_app.util.TemplateAttributeNameUtil;
@@ -45,6 +47,14 @@ public final class OrderController {
     @PostMapping("/buy")
     public Mono<String> completeOrder() {
         return orderService.completeOrder()
-            .map(orderId -> RedirectUrlUtil.AFTER_BUY_PAGE.formatted(orderId));
+            .map(orderId -> RedirectUrlUtil.AFTER_BUY_PAGE.formatted(orderId))
+            .onErrorResume(
+                InsufficientFundsException.class,
+                error -> Mono.just("redirect:/cart/items?paymentError=INSUFFICIENT_FUNDS")
+            )
+            .onErrorResume(
+                PaymentServiceUnavailableException.class,
+                error -> Mono.just("redirect:/cart/items?paymentError=SERVICE_UNAVAILABLE")
+            );
     }
 }

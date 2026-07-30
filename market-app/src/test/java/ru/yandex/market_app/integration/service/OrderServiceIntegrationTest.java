@@ -8,6 +8,7 @@ import reactor.core.publisher.Signal;
 import reactor.test.StepVerifier;
 import ru.yandex.market_app.integration.ReactiveIntegrationTest;
 import ru.yandex.market_app.integration.ReactiveIntegrationTestSupport;
+import ru.yandex.market_app.payment.InsufficientFundsException;
 import ru.yandex.market_app.service.BasketService;
 import ru.yandex.market_app.service.OrderService;
 
@@ -145,6 +146,36 @@ class OrderServiceIntegrationTest extends ReactiveIntegrationTestSupport {
                 long failures = java.util.stream.Stream.of(first, second).filter(Signal::isOnError).count();
                 assertEquals(1, successes);
                 assertEquals(1, failures);
+            })
+            .verifyComplete();
+    }
+
+    @Test
+    void shouldRollbackOrderAndKeepCartWhenPaymentFails() {
+        var paymentError = new InsufficientFundsException(
+            BigDecimal.ZERO,
+            FIRST_PRODUCT_PRICE
+        );
+
+        var scenario = resetDatabase()
+            .then(basketService.changeProductCountFromStartPage(1L, PLUS))
+            .then(Mono.fromRunnable(() -> testPaymentGateway.failPayment(paymentError)))
+            .then(orderService.completeOrder().materialize())
+            .flatMap(paymentSignal -> Mono.zip(
+                Mono.just(paymentSignal),
+                databaseClient.sql("SELECT COUNT(*) AS total FROM market.\"order\"")
+                    .map((row, metadata) -> row.get("total", Long.class))
+                    .one(),
+                basketService.getCart()
+            ));
+
+        StepVerifier.create(scenario)
+            .assertNext(result -> {
+                assertTrue(result.getT1().isOnError());
+                assertEquals(paymentError, result.getT1().getThrowable());
+                assertEquals(0L, result.getT2());
+                assertEquals(1, result.getT3().items().size());
+                assertEquals(0, FIRST_PRODUCT_PRICE.compareTo(result.getT3().total()));
             })
             .verifyComplete();
     }
