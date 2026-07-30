@@ -4,173 +4,138 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.lang.NonNull;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import reactor.core.publisher.Mono;
 import ru.yandex.market_app.dto.BasketDto;
 import ru.yandex.market_app.dto.GetProductCartModelDto;
-import ru.yandex.market_app.dto.ProductCartResultDto;
 import ru.yandex.market_app.dto.ProductResultDto;
 import ru.yandex.market_app.exception.NotRemoveItemException;
 import ru.yandex.market_app.exception.OperationNotSupportedException;
 import ru.yandex.market_app.mapper.MarketMapper;
-import ru.yandex.market_app.model.ProductAction;
-import ru.yandex.market_app.model.Product;
 import ru.yandex.market_app.model.Basket;
-import ru.yandex.market_app.model.BasketProduct;
+import ru.yandex.market_app.model.Product;
+import ru.yandex.market_app.model.ProductAction;
+import ru.yandex.market_app.repository.BasketProductRepository;
 import ru.yandex.market_app.repository.BasketRepository;
 import ru.yandex.market_app.repository.ProductRepository;
 import ru.yandex.market_app.service.BasketService;
 
 import java.math.BigDecimal;
-import java.util.List;
 import java.util.NoSuchElementException;
 
-import static ru.yandex.market_app.model.ProductAction.PLUS;
-import static ru.yandex.market_app.model.ProductAction.ONE_PRODUCT_VALUE;
-import static ru.yandex.market_app.model.ProductAction.ZERO_PRODUCT_VALUE;
 import static ru.yandex.market_app.model.ProductAction.DELETE;
+import static ru.yandex.market_app.model.ProductAction.MINUS;
+import static ru.yandex.market_app.model.ProductAction.PLUS;
 
 @Service
 @RequiredArgsConstructor
 public class BasketServiceImpl implements BasketService {
 
     private final BasketRepository basketRepository;
-
+    private final BasketProductRepository basketProductRepository;
     private final ProductRepository productRepository;
-
     private final MarketMapper marketMapper;
 
     @Transactional
     @Override
-    public void changeProductCountFromStartPage(@NonNull Long id, @NonNull ProductAction productAction) {
-        checkProductActionIsSupported(productAction);
-        performChangeProductCount(id, productAction);
+    public Mono<Void> changeProductCountFromStartPage(@NonNull Long id, @NonNull ProductAction productAction) {
+        return rejectDelete(productAction).then(performChangeProductCount(id, productAction)).then();
     }
 
     @Transactional
     @Override
-    public ProductResultDto changeProductCountFromItemPage(@NonNull Long id, @NonNull ProductAction productAction) {
-        checkProductActionIsSupported(productAction);
-        return performChangeProductCount(id, productAction);
-    }
-
-    @Transactional
-    @Override
-    public void changeProductCountFromCartPage(@NonNull Long id, @NonNull ProductAction productAction) {
-        performChangeProductCount(id, productAction);
-    }
-
-    @Transactional(readOnly = true)
-    @Override
-    public GetProductCartModelDto getCart() {
-        List<ProductCartResultDto> products = productRepository.getProductCart();
-        var total = products.isEmpty() ? BigDecimal.ZERO : products.getFirst().total();
-
-        return marketMapper.toGetProductCartModelDto(products, total);
-    }
-
-    @Transactional(readOnly = true)
-    @Override
-    public BasketDto findLazyActiveBasket() {
-
-        return basketRepository.findBasketByStatus(Basket.Status.ACTIVE)
-            .orElseThrow(() -> new NoSuchElementException("Активная корзина не найдена"));
-    }
-
-    @Transactional(readOnly = true)
-    @Override
-    public Basket getReferenceById(Long id) {
-        return basketRepository.getReferenceById(id);
-    }
-
-    @Transactional
-    @Override
-    public void closeActiveBasket() {
-        basketRepository.closeActiveBasket();
-    }
-
-    private ProductResultDto changeProductCount(
-        BasketProduct neededProduct,
-        Basket basket,
-        ProductAction productAction,
-        int indexOfNeededProduct,
-        Product product
+    public Mono<ProductResultDto> changeProductCountFromItemPage(
+        @NonNull Long id,
+        @NonNull ProductAction productAction
     ) {
-        ProductResultDto.ProductResultDtoBuilder builder = ProductResultDto.builder()
-            .id(product.getId())
-            .title(product.getTitle())
-            .description(product.getDescription())
-            .imgPath(product.getImgPath())
-            .price(product.getPrice());
-
-        if (neededProduct != null) {
-            switch (productAction) {
-                case PLUS -> {
-                    var count = neededProduct.getCount() + ONE_PRODUCT_VALUE;
-                    neededProduct.setCount(count);
-                    builder.count(count);
-                }
-                case MINUS -> {
-                    if (neededProduct.getCount().equals(ONE_PRODUCT_VALUE)) {
-                        basket.getBasketProducts().remove(indexOfNeededProduct);
-                        builder.count(ZERO_PRODUCT_VALUE);
-                    } else {
-                        var count = neededProduct.getCount() - ONE_PRODUCT_VALUE;
-                        neededProduct.setCount(count);
-                        builder.count(count);
-                    }
-                }
-                case DELETE -> {
-                    basket.getBasketProducts().remove(indexOfNeededProduct);
-                    builder.count(ZERO_PRODUCT_VALUE);
-                }
-            }
-        } else {
-            if (PLUS.equals(productAction)) {
-                basket.getBasketProducts().add(marketMapper.toBasketProduct(product, basket, ONE_PRODUCT_VALUE));
-                builder.count(ONE_PRODUCT_VALUE);
-            } else {
-                throw new NotRemoveItemException("Для продукта, которого нет в корзине разрешена только операция добавления");
-            }
-        }
-
-        return builder.build();
+        return rejectDelete(productAction).then(performChangeProductCount(id, productAction));
     }
 
-    private ProductResultDto performChangeProductCount(@NonNull Long id, @NonNull ProductAction productAction) {
-        Product product = productRepository.findById(id)
-            .orElseThrow(() -> new NoSuchElementException("Отсутствует продукт с id = %d".formatted(id)));
-        Basket basket = basketRepository.findEagerBasketByStatus(Basket.Status.ACTIVE).orElse(null);
-
-        if (ProductAction.MINUS.equals(productAction) && basket == null) {
-            throw new NotRemoveItemException("Корзина не создана, удаление товаров невозможно");
-        }
-
-        if (basket == null) {
-            basket = marketMapper.toBasket(Basket.Status.ACTIVE);
-        }
-
-        BasketProduct neededProduct = null;
-        int indexOfNeededProduct = 0;
-
-        for (var element : basket.getBasketProducts()) {
-            if (element.getId().getProductId().equals(id)) {
-                neededProduct = element;
-
-                break;
-            }
-
-            indexOfNeededProduct++;
-        }
-
-        var result = changeProductCount(neededProduct, basket, productAction, indexOfNeededProduct, product);
-        basketRepository.save(basket);
-
-        return result;
+    @Transactional
+    @Override
+    public Mono<Void> changeProductCountFromCartPage(@NonNull Long id, @NonNull ProductAction productAction) {
+        return performChangeProductCount(id, productAction).then();
     }
 
-    private void checkProductActionIsSupported(ProductAction productAction) {
+    @Transactional(readOnly = true)
+    @Override
+    public Mono<GetProductCartModelDto> getCart() {
+        return productRepository.findActiveCartItems()
+            .map(marketMapper::toProductResultDto)
+            .collectList()
+            .map(items -> {
+                BigDecimal total = items.stream()
+                    .map(item -> item.price().multiply(BigDecimal.valueOf(item.count())))
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        if (DELETE.equals(productAction)) {
-            throw new OperationNotSupportedException("Данный запрос не поддерживает операцию удаления товара");
+                return GetProductCartModelDto.builder()
+                    .items(items)
+                    .total(total)
+                    .build();
+            });
+    }
+
+    @Transactional(readOnly = true)
+    @Override
+    public Mono<BasketDto> findLazyActiveBasket() {
+        return basketRepository.findActiveBasketWithTotal()
+            .switchIfEmpty(Mono.error(new NoSuchElementException("Активная корзина не найдена")));
+    }
+
+    @Transactional(readOnly = true)
+    @Override
+    public Mono<Basket> getReferenceById(Long id) {
+        return basketRepository.findById(id)
+            .switchIfEmpty(Mono.error(new NoSuchElementException("Корзина с id %d не найдена".formatted(id))));
+    }
+
+    @Transactional
+    @Override
+    public Mono<Void> closeActiveBasket(Long basketId) {
+        return basketRepository.closeBasket(basketId)
+            .filter(Boolean::booleanValue)
+            .switchIfEmpty(Mono.error(new NoSuchElementException("Активная корзина не найдена")))
+            .then();
+    }
+
+    private Mono<ProductResultDto> performChangeProductCount(Long id, ProductAction action) {
+        return productRepository.findById(id)
+            .switchIfEmpty(Mono.error(
+                new NoSuchElementException("Отсутствует продукт с id = %d".formatted(id))
+            ))
+            .flatMap(product -> selectBasket(action)
+                .flatMap(basket -> changeCount(product, basket, action)));
+    }
+
+    private Mono<Basket> selectBasket(ProductAction action) {
+        if (action == PLUS) {
+            return basketRepository.getOrCreateActiveBasket();
         }
+
+        return basketRepository.findActiveBasketForUpdate()
+            .switchIfEmpty(Mono.error(
+                new NotRemoveItemException("Корзина не создана, удаление товаров невозможно")
+            ));
+    }
+
+    private Mono<ProductResultDto> changeCount(Product product, Basket basket, ProductAction action) {
+        Mono<Integer> count = switch (action) {
+            case PLUS -> basketProductRepository.increment(basket.getId(), product.getId());
+            case MINUS -> basketProductRepository.decrement(basket.getId(), product.getId());
+            case DELETE -> basketProductRepository.delete(basket.getId(), product.getId());
+        };
+
+        return count
+            .map(updatedCount -> marketMapper.toProductResultDto(product, updatedCount))
+            .switchIfEmpty(Mono.error(new NotRemoveItemException(
+                "Товар с id %d отсутствует в корзине".formatted(product.getId())
+            )));
+    }
+
+    private Mono<Void> rejectDelete(ProductAction action) {
+        return action == DELETE
+            ? Mono.error(new OperationNotSupportedException(
+                "Данный запрос не поддерживает операцию удаления товара"
+            ))
+            : Mono.empty();
     }
 }

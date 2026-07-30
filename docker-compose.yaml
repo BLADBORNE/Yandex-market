@@ -3,9 +3,9 @@ services:
     build: .
     ports:
       - "8080:8080"
-      - "8093:8093"
     depends_on:
-      - market-db
+      market-db:
+        condition: service_healthy
     environment:
       HOST: market-db
       PORT: 5432

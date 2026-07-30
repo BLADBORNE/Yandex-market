@@ -1,11 +1,16 @@
 package ru.yandex.market_app.integration;
 
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
-import org.testcontainers.junit.jupiter.Container;
+import org.springframework.context.annotation.Bean;
+import org.testcontainers.containers.PostgreSQLContainer;
 
-public final class PostgreTestContainer {
+@TestConfiguration(proxyBeanMethods = false)
+public class PostgreTestContainer {
 
-    @Container
+    @Bean
     @ServiceConnection
-    private static final org.testcontainers.containers.PostgreSQLContainer<?> POSTGRES = new org.testcontainers.containers.PostgreSQLContainer<>("postgres:17");
+    PostgreSQLContainer<?> postgresContainer() {
+        return new PostgreSQLContainer<>("postgres:17-alpine");
+    }
 }

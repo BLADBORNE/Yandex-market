@@ -1,15 +1,13 @@
 package ru.yandex.market_app.integration.service;
 
 import lombok.RequiredArgsConstructor;
-import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.testcontainers.context.ImportTestcontainers;
-import org.springframework.test.context.junit.jupiter.SpringJUnitConfig;
-import org.springframework.transaction.annotation.Transactional;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import ru.yandex.market_app.integration.PostgreTestContainer;
-import ru.yandex.market_app.integration.configuration.MarketAppIntegrationConfiguration;
+import reactor.core.publisher.Mono;
+import reactor.core.publisher.Signal;
+import reactor.test.StepVerifier;
+import ru.yandex.market_app.integration.ReactiveIntegrationTest;
+import ru.yandex.market_app.integration.ReactiveIntegrationTestSupport;
 import ru.yandex.market_app.service.BasketService;
 import ru.yandex.market_app.service.OrderService;
 
@@ -17,100 +15,159 @@ import java.math.BigDecimal;
 import java.util.NoSuchElementException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static ru.yandex.market_app.model.ProductAction.PLUS;
 
-@SpringJUnitConfig(MarketAppIntegrationConfiguration.class)
-@Testcontainers
-@ImportTestcontainers(PostgreTestContainer.class)
+@ReactiveIntegrationTest
 @RequiredArgsConstructor(onConstructor_ = @Autowired)
-@Transactional
-class OrderServiceIntegrationTest {
+class OrderServiceIntegrationTest extends ReactiveIntegrationTestSupport {
 
-    private static final long PRODUCT_ID = 1L;
-    private static final BigDecimal PRODUCT_PRICE = BigDecimal.valueOf(54999);
+    private static final BigDecimal FIRST_PRODUCT_PRICE = BigDecimal.valueOf(54999);
+    private static final BigDecimal SECOND_PRODUCT_PRICE = BigDecimal.valueOf(34999);
 
     private final OrderService orderService;
     private final BasketService basketService;
 
-    @Nested
-    class GetOrders {
-
-        @Test
-        void shouldReturnEmptyListWhenNoOrders() {
-            var result = orderService.getOrders();
-
-            assertNotNull(result);
-            assertTrue(result.orders().isEmpty());
-        }
-
-        @Test
-        void shouldReturnOrdersAfterComplete() {
-            basketService.changeProductCountFromStartPage(PRODUCT_ID, PLUS);
-            orderService.completeOrder();
-
-            var result = orderService.getOrders();
-
-            assertEquals(1, result.orders().size());
-            assertEquals(0, PRODUCT_PRICE.compareTo(result.orders().getFirst().totalSum()));
-        }
+    @Test
+    void shouldReturnEmptyOrderList() {
+        StepVerifier.create(resetDatabase().then(orderService.getOrders()))
+            .assertNext(result -> assertTrue(result.orders().isEmpty()))
+            .verifyComplete();
     }
 
-    @Nested
-    class GetOrder {
+    @Test
+    void shouldRejectCheckoutWithoutNonEmptyActiveCart() {
+        StepVerifier.create(resetDatabase().then(orderService.completeOrder()))
+            .expectError(NoSuchElementException.class)
+            .verify();
 
-        @Test
-        void shouldGetValidOrder() {
-            basketService.changeProductCountFromStartPage(PRODUCT_ID, PLUS);
-            Long orderId = orderService.completeOrder();
+        var emptyActiveCart = resetDatabase()
+            .then(basketService.changeProductCountFromStartPage(1L, PLUS))
+            .then(basketService.changeProductCountFromStartPage(1L, ru.yandex.market_app.model.ProductAction.MINUS))
+            .then(orderService.completeOrder());
 
-            var result = orderService.getOrder(orderId);
-
-            assertNotNull(result);
-            assertEquals(orderId, result.id());
-            assertEquals(1, result.items().size());
-            assertEquals("Ноутбук ASUS VivoBook", result.items().getFirst().title());
-            assertEquals(0, PRODUCT_PRICE.compareTo(result.totalSum()));
-            assertEquals(0, PRODUCT_PRICE.compareTo(result.items().getFirst().price()));
-        }
-
-        @Test
-        void shouldThrowWhenOrderNotFound() {
-            assertThrows(NoSuchElementException.class, () -> orderService.getOrder(Long.MAX_VALUE));
-        }
+        StepVerifier.create(emptyActiveCart)
+            .expectErrorMatches(error -> error instanceof NoSuchElementException
+                && error.getMessage().contains("пуста"))
+            .verify();
     }
 
-    @Nested
-    class CompleteOrder {
+    @Test
+    void shouldCreateOrderSnapshotCloseCartAndReturnOrder() {
+        BigDecimal expectedTotal = FIRST_PRODUCT_PRICE.multiply(BigDecimal.TWO).add(SECOND_PRODUCT_PRICE);
 
-        @Test
-        void shouldCreateOrderFromActiveBasket() {
-            basketService.changeProductCountFromStartPage(PRODUCT_ID, PLUS);
+        var scenario = resetDatabase()
+            .then(basketService.changeProductCountFromStartPage(1L, PLUS))
+            .then(basketService.changeProductCountFromStartPage(1L, PLUS))
+            .then(basketService.changeProductCountFromStartPage(2L, PLUS))
+            .then(orderService.completeOrder())
+            .flatMap(orderId -> orderService.getOrder(orderId)
+                .doOnNext(order -> {
+                    assertEquals(orderId, order.id());
+                    assertEquals(2, order.items().size());
+                    assertEquals(0, expectedTotal.compareTo(order.totalSum()));
+                    assertEquals(2, order.items().stream()
+                        .filter(item -> item.id() == 1L)
+                        .findFirst()
+                        .orElseThrow()
+                        .count());
+                })
+                .then(basketService.getCart())
+                .doOnNext(cart -> assertTrue(cart.items().isEmpty()))
+                .thenReturn(orderId))
+            .flatMap(orderId -> orderService.getOrders()
+                .doOnNext(orders -> {
+                    assertEquals(1, orders.orders().size());
+                    assertEquals(orderId, orders.orders().getFirst().id());
+                })
+                .thenReturn(orderId));
 
-            Long orderId = orderService.completeOrder();
+        StepVerifier.create(scenario)
+            .assertNext(value -> assertNotNull(value))
+            .verifyComplete();
+    }
 
-            assertNotNull(orderId);
-            assertEquals(orderId, orderService.getOrder(orderId).id());
-            assertThrows(NoSuchElementException.class, basketService::findLazyActiveBasket);
-        }
+    @Test
+    void shouldCreateMultipleIndependentOrders() {
+        var scenario = resetDatabase()
+            .then(basketService.changeProductCountFromStartPage(1L, PLUS))
+            .then(orderService.completeOrder())
+            .flatMap(firstId -> basketService.changeProductCountFromStartPage(2L, PLUS)
+                .then(orderService.completeOrder())
+                .map(secondId -> {
+                    assertNotEquals(firstId, secondId);
+                    return secondId;
+                }))
+            .then(orderService.getOrders());
 
-        @Test
-        void shouldThrowWhenActiveBasketNotExists() {
-            assertThrows(NoSuchElementException.class, orderService::completeOrder);
-        }
+        StepVerifier.create(scenario)
+            .assertNext(result -> assertEquals(2, result.orders().size()))
+            .verifyComplete();
+    }
 
-        @Test
-        void shouldAllowCreateMultipleOrders() {
-            basketService.changeProductCountFromStartPage(PRODUCT_ID, PLUS);
-            Long firstOrderId = orderService.completeOrder();
+    @Test
+    void shouldKeepOrderItemSnapshotWhenCatalogProductChanges() {
+        String originalTitle = "Ноутбук ASUS VivoBook";
 
-            basketService.changeProductCountFromStartPage(PRODUCT_ID, PLUS);
-            Long secondOrderId = orderService.completeOrder();
+        var scenario = resetDatabase()
+            .then(basketService.changeProductCountFromStartPage(1L, PLUS))
+            .then(orderService.completeOrder())
+            .flatMap(orderId -> updateProduct("Обновлённый товар", BigDecimal.ONE)
+                .then(orderService.getOrder(orderId)))
+            .flatMap(order -> updateProduct(originalTitle, FIRST_PRODUCT_PRICE)
+                .thenReturn(order));
 
-            assertEquals(2, orderService.getOrders().orders().size());
-            assertTrue(firstOrderId < secondOrderId);
-        }
+        StepVerifier.create(scenario)
+            .assertNext(order -> {
+                assertEquals(originalTitle, order.items().getFirst().title());
+                assertEquals(0, FIRST_PRODUCT_PRICE.compareTo(order.items().getFirst().price()));
+                assertEquals(0, FIRST_PRODUCT_PRICE.compareTo(order.totalSum()));
+            })
+            .verifyComplete();
+    }
+
+    @Test
+    void shouldAllowOnlyOneOfTwoConcurrentCheckouts() {
+        var scenario = resetDatabase()
+            .then(basketService.changeProductCountFromStartPage(1L, PLUS))
+            .then(Mono.zip(
+                orderService.completeOrder().materialize(),
+                orderService.completeOrder().materialize()
+            ));
+
+        StepVerifier.create(scenario)
+            .assertNext(signals -> {
+                Signal<Long> first = signals.getT1();
+                Signal<Long> second = signals.getT2();
+                long successes = java.util.stream.Stream.of(first, second).filter(Signal::hasValue).count();
+                long failures = java.util.stream.Stream.of(first, second).filter(Signal::isOnError).count();
+                assertEquals(1, successes);
+                assertEquals(1, failures);
+            })
+            .verifyComplete();
+    }
+
+    @Test
+    void shouldFailWhenOrderDoesNotExist() {
+        StepVerifier.create(resetDatabase().then(orderService.getOrder(Long.MAX_VALUE)))
+            .expectErrorMatches(error -> error instanceof NoSuchElementException
+                && error.getMessage().contains(String.valueOf(Long.MAX_VALUE)))
+            .verify();
+    }
+
+    private Mono<Void> updateProduct(String title, BigDecimal price) {
+        return databaseClient.sql("""
+                UPDATE market.product
+                SET title = :title,
+                    price = :price
+                WHERE id = 1
+                """)
+            .bind("title", title)
+            .bind("price", price)
+            .fetch()
+            .rowsUpdated()
+            .then();
     }
 }
