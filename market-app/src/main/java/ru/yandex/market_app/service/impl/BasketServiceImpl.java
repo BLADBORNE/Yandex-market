@@ -44,28 +44,37 @@ public class BasketServiceImpl implements BasketService {
 
     @Transactional
     @Override
-    public Mono<Void> changeProductCountFromStartPage(@NonNull Long id, @NonNull ProductAction productAction) {
-        return rejectDelete(productAction).then(performChangeProductCount(id, productAction));
+    public Mono<Void> changeProductCountFromStartPage(
+        @NonNull Long userId,
+        @NonNull Long id,
+        @NonNull ProductAction productAction
+    ) {
+        return rejectDelete(productAction).then(performChangeProductCount(userId, id, productAction));
     }
 
     @Transactional
     @Override
     public Mono<Void> changeProductCountFromItemPage(
+        @NonNull Long userId,
         @NonNull Long id,
         @NonNull ProductAction productAction
     ) {
-        return rejectDelete(productAction).then(performChangeProductCount(id, productAction));
+        return rejectDelete(productAction).then(performChangeProductCount(userId, id, productAction));
     }
 
     @Transactional
     @Override
-    public Mono<Void> changeProductCountFromCartPage(@NonNull Long id, @NonNull ProductAction productAction) {
-        return performChangeProductCount(id, productAction);
+    public Mono<Void> changeProductCountFromCartPage(
+        @NonNull Long userId,
+        @NonNull Long id,
+        @NonNull ProductAction productAction
+    ) {
+        return performChangeProductCount(userId, id, productAction);
     }
 
     @Override
-    public Mono<GetProductCartModelDto> getCart() {
-        return basketProductRepository.findActiveProductCounts()
+    public Mono<GetProductCartModelDto> getCart(@NonNull Long userId) {
+        return basketProductRepository.findActiveProductCounts(userId)
             .collectList()
             .flatMap(this::hydrateCart);
     }
@@ -113,45 +122,48 @@ public class BasketServiceImpl implements BasketService {
 
     @Transactional(readOnly = true)
     @Override
-    public Mono<BasketDto> findLazyActiveBasket() {
-        return basketRepository.findActiveBasketWithTotal()
+    public Mono<BasketDto> findLazyActiveBasket(@NonNull Long userId) {
+        return basketRepository.findActiveBasketWithTotal(userId)
             .switchIfEmpty(Mono.error(new NoSuchElementException("Активная корзина не найдена")));
     }
 
     @Transactional(readOnly = true)
     @Override
-    public Mono<Basket> getReferenceById(Long id) {
-        return basketRepository.findById(id)
+    public Mono<Basket> getReferenceById(@NonNull Long userId, @NonNull Long id) {
+        return basketRepository.findById(userId, id)
             .switchIfEmpty(Mono.error(new NoSuchElementException("Корзина с id %d не найдена".formatted(id))));
     }
 
     @Transactional
     @Override
-    public Mono<Void> closeActiveBasket(Long basketId) {
-        return basketRepository.closeBasket(basketId)
+    public Mono<Void> closeActiveBasket(@NonNull Long userId, @NonNull Long basketId) {
+        return basketRepository.closeBasket(userId, basketId)
             .filter(Boolean::booleanValue)
             .switchIfEmpty(Mono.error(new NoSuchElementException("Активная корзина не найдена")))
             .then();
     }
 
-    private Mono<Void> performChangeProductCount(Long id, ProductAction action) {
+    private Mono<Void> performChangeProductCount(Long userId, Long id, ProductAction action) {
         return productRepository.findById(id)
             .switchIfEmpty(Mono.error(
                 new NoSuchElementException("Отсутствует продукт с id = %d".formatted(id))
             ))
-            .flatMap(product -> selectBasket(action)
+            .flatMap(product -> selectBasket(userId, action)
                 .flatMap(basket -> changeCount(product, basket, action)));
     }
 
-    private Mono<Basket> selectBasket(ProductAction action) {
+    private Mono<Basket> selectBasket(Long userId, ProductAction action) {
         if (action == PLUS) {
-            return basketRepository.getOrCreateActiveBasket();
+            return basketRepository.getOrCreateActiveBasket(userId)
+                .switchIfEmpty(this.<Basket>checkoutInProgress());
         }
 
-        return basketRepository.findActiveBasketForUpdate()
-            .switchIfEmpty(Mono.error(
-                new NotRemoveItemException("Корзина не создана, удаление товаров невозможно")
-            ));
+        return basketRepository.findActiveBasketForUpdate(userId)
+            .switchIfEmpty(Mono.defer(() -> basketRepository.findOpenBasket(userId)
+                .flatMap(basket -> this.<Basket>checkoutInProgress())
+                .switchIfEmpty(Mono.error(
+                    new NotRemoveItemException("Корзина не создана, удаление товаров невозможно")
+                ))));
     }
 
     private Mono<Void> changeCount(Product product, Basket basket, ProductAction action) {
@@ -174,5 +186,11 @@ public class BasketServiceImpl implements BasketService {
                 "Данный запрос не поддерживает операцию удаления товара"
             ))
             : Mono.empty();
+    }
+
+    private <T> Mono<T> checkoutInProgress() {
+        return Mono.error(new OperationNotSupportedException(
+            "Состав корзины нельзя менять, пока уточняется результат платежа"
+        ));
     }
 }

@@ -22,6 +22,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class PaymentBalanceStoreTest {
 
     private static final BigDecimal INITIAL_BALANCE = new BigDecimal("10.00");
+    private static final UUID CUSTOMER_ID = UUID.fromString(
+        "10000000-0000-0000-0000-000000000001"
+    );
+    private static final UUID OTHER_CUSTOMER_ID = UUID.fromString(
+        "10000000-0000-0000-0000-000000000002"
+    );
 
     private PaymentBalanceStore store;
     private PaymentService paymentService;
@@ -34,7 +40,7 @@ class PaymentBalanceStoreTest {
 
     @Test
     void shouldReturnConfiguredBalance() {
-        StepVerifier.create(paymentService.getBalance())
+        StepVerifier.create(paymentService.getBalance(CUSTOMER_ID))
             .assertNext(balance -> assertMoneyEquals(INITIAL_BALANCE, balance))
             .verifyComplete();
     }
@@ -43,7 +49,7 @@ class PaymentBalanceStoreTest {
     void shouldDebitExactBalance() {
         UUID requestId = UUID.randomUUID();
 
-        StepVerifier.create(paymentService.makePayment(requestId, INITIAL_BALANCE))
+        StepVerifier.create(paymentService.makePayment(CUSTOMER_ID, requestId, INITIAL_BALANCE))
             .assertNext(result -> {
                 assertEquals(requestId, result.requestId());
                 assertMoneyEquals(INITIAL_BALANCE, result.amount());
@@ -51,12 +57,13 @@ class PaymentBalanceStoreTest {
             })
             .verifyComplete();
 
-        assertMoneyEquals(BigDecimal.ZERO, store.getBalance());
+        assertMoneyEquals(BigDecimal.ZERO, store.getBalance(CUSTOMER_ID));
     }
 
     @Test
     void shouldNotDebitWhenFundsAreInsufficient() {
         StepVerifier.create(paymentService.makePayment(
+                CUSTOMER_ID,
                 UUID.randomUUID(),
                 new BigDecimal("10.01")
             ))
@@ -68,62 +75,67 @@ class PaymentBalanceStoreTest {
             })
             .verify();
 
-        assertMoneyEquals(INITIAL_BALANCE, store.getBalance());
+        assertMoneyEquals(INITIAL_BALANCE, store.getBalance(CUSTOMER_ID));
     }
 
     @Test
     void shouldExecuteDebitOnlyAfterSubscription() {
-        var payment = paymentService.makePayment(UUID.randomUUID(), BigDecimal.ONE);
+        var payment = paymentService.makePayment(
+            CUSTOMER_ID,
+            UUID.randomUUID(),
+            BigDecimal.ONE
+        );
 
-        assertMoneyEquals(INITIAL_BALANCE, store.getBalance());
+        assertMoneyEquals(INITIAL_BALANCE, store.getBalance(CUSTOMER_ID));
 
         StepVerifier.create(payment)
             .expectNextCount(1)
             .verifyComplete();
 
-        assertMoneyEquals(new BigDecimal("9.00"), store.getBalance());
+        assertMoneyEquals(new BigDecimal("9.00"), store.getBalance(CUSTOMER_ID));
     }
 
     @Test
     void shouldRejectSubCentAmountWithoutChangingBalance() {
         StepVerifier.create(paymentService.makePayment(
+                CUSTOMER_ID,
                 UUID.randomUUID(),
                 new BigDecimal("1.001")
             ))
             .expectError(InvalidPaymentRequestException.class)
             .verify();
 
-        assertMoneyEquals(INITIAL_BALANCE, store.getBalance());
+        assertMoneyEquals(INITIAL_BALANCE, store.getBalance(CUSTOMER_ID));
     }
 
     @Test
     void shouldReturnStoredResultForRepeatedRequest() {
         UUID requestId = UUID.randomUUID();
 
-        PaymentResult first = store.debit(requestId, new BigDecimal("3.00"));
-        PaymentResult repeated = store.debit(requestId, new BigDecimal("3.0"));
+        PaymentResult first = store.debit(CUSTOMER_ID, requestId, new BigDecimal("3.00"));
+        PaymentResult repeated = store.debit(CUSTOMER_ID, requestId, new BigDecimal("3.0"));
 
         assertEquals(first, repeated);
-        assertMoneyEquals(new BigDecimal("7.00"), store.getBalance());
+        assertMoneyEquals(new BigDecimal("7.00"), store.getBalance(CUSTOMER_ID));
     }
 
     @Test
     void shouldRejectIdempotencyKeyReusedWithAnotherAmount() {
         UUID requestId = UUID.randomUUID();
-        store.debit(requestId, new BigDecimal("3.00"));
+        store.debit(CUSTOMER_ID, requestId, new BigDecimal("3.00"));
 
         assertThrows(
             IdempotencyConflictException.class,
-            () -> store.debit(requestId, new BigDecimal("4.00"))
+            () -> store.debit(CUSTOMER_ID, requestId, new BigDecimal("4.00"))
         );
-        assertMoneyEquals(new BigDecimal("7.00"), store.getBalance());
+        assertMoneyEquals(new BigDecimal("7.00"), store.getBalance(CUSTOMER_ID));
     }
 
     @Test
     void shouldNeverOverdrawBalanceUnderConcurrentPayments() {
         var payments = Flux.range(0, 50)
             .flatMap(index -> paymentService
-                .makePayment(UUID.randomUUID(), BigDecimal.ONE)
+                .makePayment(CUSTOMER_ID, UUID.randomUUID(), BigDecimal.ONE)
                 .subscribeOn(Schedulers.parallel())
                 .materialize(), 50)
             .collectList();
@@ -140,7 +152,7 @@ class PaymentBalanceStoreTest {
 
                 assertEquals(10, successfulPayments);
                 assertEquals(40, declinedPayments);
-                assertMoneyEquals(BigDecimal.ZERO, store.getBalance());
+                assertMoneyEquals(BigDecimal.ZERO, store.getBalance(CUSTOMER_ID));
             })
             .verifyComplete();
     }
@@ -150,7 +162,7 @@ class PaymentBalanceStoreTest {
         UUID requestId = UUID.randomUUID();
         var payments = Flux.range(0, 50)
             .flatMap(index -> paymentService
-                .makePayment(requestId, new BigDecimal("3.00"))
+                .makePayment(CUSTOMER_ID, requestId, new BigDecimal("3.00"))
                 .subscribeOn(Schedulers.parallel()), 50)
             .collectList();
 
@@ -161,9 +173,45 @@ class PaymentBalanceStoreTest {
                     result -> result.requestId().equals(requestId)
                         && result.remainingBalance().compareTo(new BigDecimal("7.00")) == 0
                 ));
-                assertMoneyEquals(new BigDecimal("7.00"), store.getBalance());
+                assertMoneyEquals(new BigDecimal("7.00"), store.getBalance(CUSTOMER_ID));
             })
             .verifyComplete();
+    }
+
+    @Test
+    void shouldKeepBalancesIndependentForDifferentCustomers() {
+        UUID sharedRequestId = UUID.randomUUID();
+
+        PaymentResult firstCustomer = store.debit(
+            CUSTOMER_ID,
+            sharedRequestId,
+            new BigDecimal("3.00")
+        );
+        PaymentResult secondCustomer = store.debit(
+            OTHER_CUSTOMER_ID,
+            sharedRequestId,
+            new BigDecimal("4.00")
+        );
+
+        assertMoneyEquals(new BigDecimal("7.00"), firstCustomer.remainingBalance());
+        assertMoneyEquals(new BigDecimal("6.00"), secondCustomer.remainingBalance());
+        assertMoneyEquals(new BigDecimal("7.00"), store.getBalance(CUSTOMER_ID));
+        assertMoneyEquals(new BigDecimal("6.00"), store.getBalance(OTHER_CUSTOMER_ID));
+    }
+
+    @Test
+    void shouldRejectMissingCustomerIdentifier() {
+        StepVerifier.create(paymentService.getBalance(null))
+            .expectError(InvalidPaymentRequestException.class)
+            .verify();
+
+        StepVerifier.create(paymentService.makePayment(
+                null,
+                UUID.randomUUID(),
+                BigDecimal.ONE
+            ))
+            .expectError(InvalidPaymentRequestException.class)
+            .verify();
     }
 
     private void assertMoneyEquals(BigDecimal expected, BigDecimal actual) {

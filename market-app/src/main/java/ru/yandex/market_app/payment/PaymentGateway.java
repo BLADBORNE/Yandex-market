@@ -7,7 +7,7 @@ import java.util.UUID;
 
 public interface PaymentGateway {
 
-    Mono<BigDecimal> getBalance();
+    Mono<BigDecimal> getBalance(UUID accountId);
 
-    Mono<PaymentReceipt> pay(UUID requestId, BigDecimal amount);
+    Mono<PaymentReceipt> pay(UUID accountId, UUID requestId, BigDecimal amount);
 }

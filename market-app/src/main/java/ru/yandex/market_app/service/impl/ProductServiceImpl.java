@@ -9,6 +9,7 @@ import reactor.core.publisher.Mono;
 import ru.yandex.market_app.cache.CachedProduct;
 import ru.yandex.market_app.dto.GetProductModelDto;
 import ru.yandex.market_app.dto.PageableResult;
+import ru.yandex.market_app.dto.ProductCount;
 import ru.yandex.market_app.dto.ProductResultDto;
 import ru.yandex.market_app.exception.ItemNotFoundException;
 import ru.yandex.market_app.mapper.MarketMapper;
@@ -38,13 +39,13 @@ public class ProductServiceImpl implements ProductService {
     public Mono<GetProductModelDto> getProducts(
         @Nullable String search,
         @NonNull ProductPageableUtil.ProductSort sort,
-        @NonNull Pageable pageable
+        @NonNull Pageable pageable,
+        @Nullable Long userId
     ) {
         String normalizedSearch = search == null ? "" : search.trim();
         return Mono.zip(
                 productCatalogProvider.getCatalog(),
-                basketProductRepository.findActiveProductCounts()
-                    .collectMap(count -> count.productId(), count -> count.count())
+                getProductCounts(userId)
             )
             .map(tuple -> tuple.getT1().products().stream()
                 .filter(matches(normalizedSearch))
@@ -60,13 +61,28 @@ public class ProductServiceImpl implements ProductService {
     }
 
     @Override
-    public Mono<ProductResultDto> getItem(Long itemId) {
+    public Mono<ProductResultDto> getItem(Long itemId, @Nullable Long userId) {
         return productCatalogProvider.getProduct(itemId)
             .switchIfEmpty(Mono.error(
                 new ItemNotFoundException("Не найден объект с id = %d".formatted(itemId))
             ))
-            .zipWith(basketProductRepository.findActiveProductCount(itemId).defaultIfEmpty(0))
+            .zipWith(getProductCount(userId, itemId))
             .map(tuple -> marketMapper.toProductResultDto(tuple.getT1(), tuple.getT2()));
+    }
+
+    private Mono<Map<Long, Integer>> getProductCounts(@Nullable Long userId) {
+        if (userId == null) {
+            return Mono.just(Map.of());
+        }
+
+        return basketProductRepository.findActiveProductCounts(userId)
+            .collectMap(ProductCount::productId, ProductCount::count);
+    }
+
+    private Mono<Integer> getProductCount(@Nullable Long userId, Long itemId) {
+        return userId == null
+            ? Mono.just(0)
+            : basketProductRepository.findActiveProductCount(userId, itemId).defaultIfEmpty(0);
     }
 
     private Predicate<CachedProduct> matches(String search) {

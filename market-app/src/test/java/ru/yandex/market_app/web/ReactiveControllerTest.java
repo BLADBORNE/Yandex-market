@@ -1,5 +1,6 @@
 package ru.yandex.market_app.web;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -7,6 +8,8 @@ import org.springframework.boot.test.autoconfigure.web.reactive.WebFluxTest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.MediaType;
+import org.springframework.context.annotation.Import;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import org.springframework.web.reactive.function.BodyInserters;
@@ -18,6 +21,7 @@ import ru.yandex.market_app.dto.GetProductModelDto;
 import ru.yandex.market_app.dto.ItemDto;
 import ru.yandex.market_app.dto.PageableResult;
 import ru.yandex.market_app.dto.ProductResultDto;
+import ru.yandex.market_app.configuration.MarketSecurityConfiguration;
 import ru.yandex.market_app.exception.ItemNotFoundException;
 import ru.yandex.market_app.exception.NotRemoveItemException;
 import ru.yandex.market_app.exception.OperationNotSupportedException;
@@ -25,6 +29,10 @@ import ru.yandex.market_app.payment.InsufficientFundsException;
 import ru.yandex.market_app.payment.PaymentGateway;
 import ru.yandex.market_app.payment.PaymentRejectedException;
 import ru.yandex.market_app.payment.PaymentServiceUnavailableException;
+import ru.yandex.market_app.model.UserAccount;
+import ru.yandex.market_app.security.DatabaseReactiveUserDetailsService;
+import ru.yandex.market_app.security.MarketUserPrincipal;
+import ru.yandex.market_app.security.SessionCookieLogoutHandler;
 import ru.yandex.market_app.service.BasketService;
 import ru.yandex.market_app.service.OrderService;
 import ru.yandex.market_app.service.ProductService;
@@ -32,14 +40,18 @@ import ru.yandex.market_app.service.ProductService;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.security.test.web.reactive.server.SecurityMockServerConfigurers.csrf;
+import static org.springframework.security.test.web.reactive.server.SecurityMockServerConfigurers.mockAuthentication;
 import static ru.yandex.market_app.model.ProductAction.DELETE;
 import static ru.yandex.market_app.model.ProductAction.MINUS;
 import static ru.yandex.market_app.model.ProductAction.PLUS;
@@ -52,7 +64,12 @@ import static ru.yandex.market_app.util.ProductPageableUtil.ProductSort.PRICE;
     OrderController.class,
     GlobalExceptionHandler.class
 })
+@Import({MarketSecurityConfiguration.class, SessionCookieLogoutHandler.class})
 class ReactiveControllerTest {
+
+    private static final long USER_ID = 1L;
+    private static final UUID PAYMENT_ACCOUNT_ID =
+        UUID.fromString("85a65fde-0492-4dcf-b1f4-dbc8f901ae72");
 
     @Autowired
     private WebTestClient webTestClient;
@@ -69,11 +86,35 @@ class ReactiveControllerTest {
     @MockitoBean
     private PaymentGateway paymentGateway;
 
+    @MockitoBean
+    private DatabaseReactiveUserDetailsService userDetailsService;
+
+    private WebTestClient authenticatedClient;
+
+    @BeforeEach
+    void setUpSecurityClient() {
+        var principal = new MarketUserPrincipal(new UserAccount(
+            USER_ID,
+            "alice",
+            "$2a$12$test",
+            true,
+            PAYMENT_ACCOUNT_ID
+        ));
+        var authentication = UsernamePasswordAuthenticationToken.authenticated(
+            principal,
+            principal.getPassword(),
+            principal.getAuthorities()
+        );
+        authenticatedClient = webTestClient
+            .mutateWith(mockAuthentication(authentication))
+            .mutateWith(csrf());
+    }
+
     @Test
     void shouldRenderCatalogAndMapPagingParameters() {
         var products = List.of(List.of(product(1L, "Ноутбук", 2)));
         var paging = PageableResult.init(7, 2, true, true);
-        when(productService.getProducts(eq("ноутбук"), eq(PRICE), any(Pageable.class)))
+        when(productService.getProducts(eq("ноутбук"), eq(PRICE), any(Pageable.class), isNull()))
             .thenReturn(Mono.just(GetProductModelDto.builder()
                 .items(products)
                 .search("ноутбук")
@@ -94,7 +135,7 @@ class ReactiveControllerTest {
             });
 
         var pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
-        verify(productService).getProducts(eq("ноутбук"), eq(PRICE), pageableCaptor.capture());
+        verify(productService).getProducts(eq("ноутбук"), eq(PRICE), pageableCaptor.capture(), isNull());
         Pageable pageable = pageableCaptor.getValue();
         assertEquals(1, pageable.getPageNumber());
         assertEquals(7, pageable.getPageSize());
@@ -105,7 +146,7 @@ class ReactiveControllerTest {
 
     @Test
     void shouldSupportRootCatalogWithDefaults() {
-        when(productService.getProducts(eq(""), eq(NO), any(Pageable.class)))
+        when(productService.getProducts(eq(""), eq(NO), any(Pageable.class), isNull()))
             .thenReturn(Mono.just(GetProductModelDto.builder()
                 .items(List.of())
                 .search("")
@@ -121,16 +162,16 @@ class ReactiveControllerTest {
             .value(body -> assertTrue(body.contains("Страница: 1")));
 
         var pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
-        verify(productService).getProducts(eq(""), eq(NO), pageableCaptor.capture());
+        verify(productService).getProducts(eq(""), eq(NO), pageableCaptor.capture(), isNull());
         assertEquals(0, pageableCaptor.getValue().getPageNumber());
         assertEquals(5, pageableCaptor.getValue().getPageSize());
     }
 
     @Test
     void shouldMutateCatalogItemAndRedirectWithContext() {
-        when(basketService.changeProductCountFromStartPage(15L, PLUS)).thenReturn(Mono.empty());
+        when(basketService.changeProductCountFromStartPage(USER_ID, 15L, PLUS)).thenReturn(Mono.empty());
 
-        webTestClient.post()
+        authenticatedClient.post()
             .uri("/items?id=15&search=phone&sort=PRICE&pageNumber=3&pageSize=10&action=PLUS")
             .exchange()
             .expectStatus().is3xxRedirection()
@@ -139,14 +180,14 @@ class ReactiveControllerTest {
                 "/items?search=phone&sort=PRICE&pageNumber=3&pageSize=10"
             );
 
-        verify(basketService).changeProductCountFromStartPage(15L, PLUS);
+        verify(basketService).changeProductCountFromStartPage(USER_ID, 15L, PLUS);
     }
 
     @Test
     void shouldUseSafeDefaultsForCatalogMutationRedirect() {
-        when(basketService.changeProductCountFromStartPage(15L, PLUS)).thenReturn(Mono.empty());
+        when(basketService.changeProductCountFromStartPage(USER_ID, 15L, PLUS)).thenReturn(Mono.empty());
 
-        webTestClient.post()
+        authenticatedClient.post()
             .uri("/items?id=15&action=PLUS")
             .exchange()
             .expectStatus().is3xxRedirection()
@@ -158,10 +199,11 @@ class ReactiveControllerTest {
 
     @Test
     void shouldRenderProductAndUpdatedProduct() {
-        when(productService.getItem(7L))
-            .thenReturn(Mono.just(product(7L, "Телефон", 1)))
+        when(productService.getItem(7L, null))
+            .thenReturn(Mono.just(product(7L, "Телефон", 1)));
+        when(productService.getItem(7L, USER_ID))
             .thenReturn(Mono.just(product(7L, "Телефон", 0)));
-        when(basketService.changeProductCountFromItemPage(7L, MINUS))
+        when(basketService.changeProductCountFromItemPage(USER_ID, 7L, MINUS))
             .thenReturn(Mono.empty());
 
         webTestClient.get()
@@ -175,7 +217,7 @@ class ReactiveControllerTest {
                 assertTrue(body.contains("1000"));
             });
 
-        webTestClient.post()
+        authenticatedClient.post()
             .uri("/items/7")
             .body(BodyInserters.fromFormData("action", "MINUS"))
             .exchange()
@@ -186,9 +228,9 @@ class ReactiveControllerTest {
 
     @Test
     void shouldRenderReactiveDomainErrors() {
-        when(productService.getItem(99L))
+        when(productService.getItem(99L, null))
             .thenReturn(Mono.error(new ItemNotFoundException("Товар не найден")));
-        when(basketService.changeProductCountFromItemPage(7L, DELETE))
+        when(basketService.changeProductCountFromItemPage(USER_ID, 7L, DELETE))
             .thenReturn(Mono.error(new OperationNotSupportedException("Операция не поддерживается")));
 
         webTestClient.get()
@@ -202,7 +244,7 @@ class ReactiveControllerTest {
                 assertTrue(body.contains("Товар не найден"));
             });
 
-        webTestClient.post()
+        authenticatedClient.post()
             .uri("/items/7?action=DELETE")
             .exchange()
             .expectStatus().isBadRequest()
@@ -220,7 +262,7 @@ class ReactiveControllerTest {
             .exchange()
             .expectStatus().isBadRequest();
 
-        webTestClient.post().uri("/items/7")
+        authenticatedClient.post().uri("/items/7")
             .body(BodyInserters.fromFormData("action", "UNKNOWN"))
             .exchange()
             .expectStatus().isBadRequest();
@@ -228,24 +270,24 @@ class ReactiveControllerTest {
 
     @Test
     void shouldRejectMissingOrInvalidCatalogAndCartPostFields() {
-        webTestClient.post()
+        authenticatedClient.post()
             .uri("/items")
             .body(BodyInserters.fromFormData("id", "1"))
             .exchange()
             .expectStatus().isBadRequest();
 
-        webTestClient.post()
+        authenticatedClient.post()
             .uri("/items?id=1&action=UNKNOWN")
             .exchange()
             .expectStatus().isBadRequest();
 
-        webTestClient.post()
+        authenticatedClient.post()
             .uri("/cart/items")
             .body(BodyInserters.fromFormData("id", "1"))
             .exchange()
             .expectStatus().isBadRequest();
 
-        webTestClient.post()
+        authenticatedClient.post()
             .uri("/cart/items?id=1&action=UNKNOWN")
             .exchange()
             .expectStatus().isBadRequest();
@@ -255,13 +297,14 @@ class ReactiveControllerTest {
     void shouldRenderCartForGetAndForPostMutation() {
         var before = cart(product(3L, "Монитор", 1), BigDecimal.valueOf(1000));
         var after = cart(product(3L, "Монитор", 2), BigDecimal.valueOf(2000));
-        when(basketService.getCart())
+        when(basketService.getCart(USER_ID))
             .thenReturn(Mono.just(before))
             .thenReturn(Mono.just(after));
-        when(paymentGateway.getBalance()).thenReturn(Mono.just(BigDecimal.valueOf(100_000)));
-        when(basketService.changeProductCountFromCartPage(3L, PLUS)).thenReturn(Mono.empty());
+        when(paymentGateway.getBalance(PAYMENT_ACCOUNT_ID))
+            .thenReturn(Mono.just(BigDecimal.valueOf(100_000)));
+        when(basketService.changeProductCountFromCartPage(USER_ID, 3L, PLUS)).thenReturn(Mono.empty());
 
-        webTestClient.get()
+        authenticatedClient.get()
             .uri("/cart/items")
             .exchange()
             .expectStatus().isOk()
@@ -272,7 +315,7 @@ class ReactiveControllerTest {
                 assertTrue(body.contains("action=\"/buy\""));
             });
 
-        webTestClient.post()
+        authenticatedClient.post()
             .uri("/cart/items")
             .body(BodyInserters.fromFormData("id", "3").with("action", "PLUS"))
             .exchange()
@@ -283,17 +326,17 @@ class ReactiveControllerTest {
                 assertTrue(body.contains(">2</span>"));
             });
 
-        verify(basketService).changeProductCountFromCartPage(3L, PLUS);
+        verify(basketService).changeProductCountFromCartPage(USER_ID, 3L, PLUS);
     }
 
     @Test
     void shouldRenderEmptyCartWithoutBuyButton() {
-        when(basketService.getCart()).thenReturn(Mono.just(GetProductCartModelDto.builder()
+        when(basketService.getCart(USER_ID)).thenReturn(Mono.just(GetProductCartModelDto.builder()
             .items(List.of())
             .total(BigDecimal.ZERO)
             .build()));
 
-        webTestClient.get()
+        authenticatedClient.get()
             .uri("/cart/items")
             .exchange()
             .expectStatus().isOk()
@@ -306,12 +349,12 @@ class ReactiveControllerTest {
 
     @Test
     void shouldDisableCheckoutAndExplainInsufficientFunds() {
-        when(basketService.getCart()).thenReturn(Mono.just(
+        when(basketService.getCart(USER_ID)).thenReturn(Mono.just(
             cart(product(3L, "Монитор", 1), BigDecimal.valueOf(2000))
         ));
-        when(paymentGateway.getBalance()).thenReturn(Mono.just(BigDecimal.valueOf(1000)));
+        when(paymentGateway.getBalance(PAYMENT_ACCOUNT_ID)).thenReturn(Mono.just(BigDecimal.valueOf(1000)));
 
-        webTestClient.get()
+        authenticatedClient.get()
             .uri("/cart/items")
             .exchange()
             .expectStatus().isOk()
@@ -325,14 +368,14 @@ class ReactiveControllerTest {
 
     @Test
     void shouldDisableCheckoutWhenPaymentServiceIsUnavailable() {
-        when(basketService.getCart()).thenReturn(Mono.just(
+        when(basketService.getCart(USER_ID)).thenReturn(Mono.just(
             cart(product(3L, "Монитор", 1), BigDecimal.valueOf(2000))
         ));
-        when(paymentGateway.getBalance()).thenReturn(Mono.error(
+        when(paymentGateway.getBalance(PAYMENT_ACCOUNT_ID)).thenReturn(Mono.error(
             new PaymentServiceUnavailableException("offline")
         ));
 
-        webTestClient.get()
+        authenticatedClient.get()
             .uri("/cart/items")
             .exchange()
             .expectStatus().isOk()
@@ -345,12 +388,12 @@ class ReactiveControllerTest {
 
     @Test
     void shouldRecheckBalanceAfterTransientCheckoutFailure() {
-        when(basketService.getCart()).thenReturn(Mono.just(
+        when(basketService.getCart(USER_ID)).thenReturn(Mono.just(
             cart(product(3L, "Монитор", 1), BigDecimal.valueOf(2000))
         ));
-        when(paymentGateway.getBalance()).thenReturn(Mono.just(BigDecimal.valueOf(3000)));
+        when(paymentGateway.getBalance(PAYMENT_ACCOUNT_ID)).thenReturn(Mono.just(BigDecimal.valueOf(3000)));
 
-        webTestClient.get()
+        authenticatedClient.get()
             .uri("/cart/items?paymentError=SERVICE_UNAVAILABLE")
             .exchange()
             .expectStatus().isOk()
@@ -363,10 +406,10 @@ class ReactiveControllerTest {
 
     @Test
     void shouldRenderCartMutationError() {
-        when(basketService.changeProductCountFromCartPage(3L, DELETE))
+        when(basketService.changeProductCountFromCartPage(USER_ID, 3L, DELETE))
             .thenReturn(Mono.error(new NotRemoveItemException("Товара нет в корзине")));
 
-        webTestClient.post()
+        authenticatedClient.post()
             .uri("/cart/items?id=3&action=DELETE")
             .exchange()
             .expectStatus().isBadRequest()
@@ -377,12 +420,12 @@ class ReactiveControllerTest {
     @Test
     void shouldRenderOrdersAndOrderDetails() {
         var order = order(10L);
-        when(orderService.getOrders()).thenReturn(Mono.just(
+        when(orderService.getOrders(USER_ID)).thenReturn(Mono.just(
             GetListOrderModelDto.builder().orders(List.of(order)).build()
         ));
-        when(orderService.getOrder(10L)).thenReturn(Mono.just(order));
+        when(orderService.getOrder(USER_ID, 10L)).thenReturn(Mono.just(order));
 
-        webTestClient.get()
+        authenticatedClient.get()
             .uri("/orders")
             .exchange()
             .expectStatus().isOk()
@@ -393,7 +436,7 @@ class ReactiveControllerTest {
                 assertTrue(body.contains("Ноутбук"));
             });
 
-        webTestClient.get()
+        authenticatedClient.get()
             .uri("/orders/10?newOrder=true")
             .exchange()
             .expectStatus().isOk()
@@ -407,18 +450,18 @@ class ReactiveControllerTest {
 
     @Test
     void shouldDefaultNewOrderToFalseAndHandleMissingOrder() {
-        when(orderService.getOrder(11L)).thenReturn(Mono.just(order(11L)));
-        when(orderService.getOrder(99L))
+        when(orderService.getOrder(USER_ID, 11L)).thenReturn(Mono.just(order(11L)));
+        when(orderService.getOrder(USER_ID, 99L))
             .thenReturn(Mono.error(new NoSuchElementException("Заказ не найден")));
 
-        webTestClient.get()
+        authenticatedClient.get()
             .uri("/orders/11")
             .exchange()
             .expectStatus().isOk()
             .expectBody(String.class)
             .value(body -> assertTrue(!body.contains("Успешная покупка")));
 
-        webTestClient.get()
+        authenticatedClient.get()
             .uri("/orders/99")
             .exchange()
             .expectStatus().isNotFound()
@@ -428,20 +471,20 @@ class ReactiveControllerTest {
 
     @Test
     void shouldBuyAndRedirectToCreatedOrder() {
-        when(orderService.completeOrder()).thenReturn(Mono.just(42L));
+        when(orderService.completeOrder(USER_ID, PAYMENT_ACCOUNT_ID)).thenReturn(Mono.just(42L));
 
-        webTestClient.post()
+        authenticatedClient.post()
             .uri("/buy")
             .exchange()
             .expectStatus().is3xxRedirection()
             .expectHeader().valueEquals("Location", "/orders/42?newOrder=true");
 
-        verify(orderService).completeOrder();
+        verify(orderService).completeOrder(USER_ID, PAYMENT_ACCOUNT_ID);
     }
 
     @Test
     void shouldReturnToCartWhenPaymentFails() {
-        when(orderService.completeOrder())
+        when(orderService.completeOrder(USER_ID, PAYMENT_ACCOUNT_ID))
             .thenReturn(Mono.error(new InsufficientFundsException(
                 BigDecimal.valueOf(500),
                 BigDecimal.valueOf(1000)
@@ -449,7 +492,7 @@ class ReactiveControllerTest {
             .thenReturn(Mono.error(new PaymentServiceUnavailableException("offline")))
             .thenReturn(Mono.error(new PaymentRejectedException("conflict")));
 
-        webTestClient.post()
+        authenticatedClient.post()
             .uri("/buy")
             .exchange()
             .expectStatus().is3xxRedirection()
@@ -458,7 +501,7 @@ class ReactiveControllerTest {
                 "/cart/items?paymentError=INSUFFICIENT_FUNDS"
             );
 
-        webTestClient.post()
+        authenticatedClient.post()
             .uri("/buy")
             .exchange()
             .expectStatus().is3xxRedirection()
@@ -467,7 +510,7 @@ class ReactiveControllerTest {
                 "/cart/items?paymentError=SERVICE_UNAVAILABLE"
             );
 
-        webTestClient.post()
+        authenticatedClient.post()
             .uri("/buy")
             .exchange()
             .expectStatus().is3xxRedirection()
@@ -479,11 +522,11 @@ class ReactiveControllerTest {
 
     @Test
     void shouldRenderRejectedPaymentWithoutCallingBalanceAgain() {
-        when(basketService.getCart()).thenReturn(Mono.just(
+        when(basketService.getCart(USER_ID)).thenReturn(Mono.just(
             cart(product(3L, "Монитор", 1), BigDecimal.valueOf(2000))
         ));
 
-        webTestClient.get()
+        authenticatedClient.get()
             .uri("/cart/items?paymentError=PAYMENT_REJECTED")
             .exchange()
             .expectStatus().isOk()

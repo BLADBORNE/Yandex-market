@@ -13,14 +13,16 @@ public class BasketProductRepository {
 
     private final DatabaseClient databaseClient;
 
-    public Flux<ProductCount> findActiveProductCounts() {
+    public Flux<ProductCount> findActiveProductCounts(Long userId) {
         return databaseClient.sql("""
                 SELECT bp.product_id, bp.count
                 FROM market.basket_product bp
                 JOIN market.basket b ON b.id = bp.basket_id
-                WHERE b.status = 'ACTIVE'
+                WHERE b.status IN ('ACTIVE', 'CHECKOUT')
+                  AND b.user_id = :userId
                 ORDER BY bp.product_id
                 """)
+            .bind("userId", userId)
             .map((row, metadata) -> new ProductCount(
                 row.get("product_id", Long.class),
                 row.get("count", Integer.class)
@@ -28,14 +30,16 @@ public class BasketProductRepository {
             .all();
     }
 
-    public Mono<Integer> findActiveProductCount(Long productId) {
+    public Mono<Integer> findActiveProductCount(Long userId, Long productId) {
         return databaseClient.sql("""
                 SELECT bp.count
                 FROM market.basket_product bp
                 JOIN market.basket b ON b.id = bp.basket_id
-                WHERE b.status = 'ACTIVE'
+                WHERE b.status IN ('ACTIVE', 'CHECKOUT')
+                  AND b.user_id = :userId
                   AND bp.product_id = :productId
                 """)
+            .bind("userId", userId)
             .bind("productId", productId)
             .map((row, metadata) -> row.get("count", Integer.class))
             .one();
@@ -44,9 +48,18 @@ public class BasketProductRepository {
     public Mono<Integer> increment(Long basketId, Long productId) {
         return databaseClient.sql("""
                 INSERT INTO market.basket_product (basket_id, product_id, count)
-                VALUES (:basketId, :productId, 1)
+                SELECT :basketId, :productId, 1
+                FROM market.basket
+                WHERE id = :basketId
+                  AND status = 'ACTIVE'
                 ON CONFLICT (product_id, basket_id)
                 DO UPDATE SET count = market.basket_product.count + 1
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM market.basket
+                    WHERE id = :basketId
+                      AND status = 'ACTIVE'
+                )
                 RETURNING count
                 """)
             .bind("basketId", basketId)
@@ -62,6 +75,12 @@ public class BasketProductRepository {
                 WHERE basket_id = :basketId
                   AND product_id = :productId
                   AND count > 1
+                  AND EXISTS (
+                      SELECT 1
+                      FROM market.basket
+                      WHERE id = :basketId
+                        AND status = 'ACTIVE'
+                  )
                 RETURNING count
                 """)
             .bind("basketId", basketId)
@@ -76,6 +95,12 @@ public class BasketProductRepository {
                 DELETE FROM market.basket_product
                 WHERE basket_id = :basketId
                   AND product_id = :productId
+                  AND EXISTS (
+                      SELECT 1
+                      FROM market.basket
+                      WHERE id = :basketId
+                        AND status = 'ACTIVE'
+                  )
                 RETURNING 0 AS count
                 """)
             .bind("basketId", basketId)
@@ -90,6 +115,12 @@ public class BasketProductRepository {
                 WHERE basket_id = :basketId
                   AND product_id = :productId
                   AND count = 1
+                  AND EXISTS (
+                      SELECT 1
+                      FROM market.basket
+                      WHERE id = :basketId
+                        AND status = 'ACTIVE'
+                  )
                 RETURNING 0 AS count
                 """)
             .bind("basketId", basketId)

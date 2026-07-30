@@ -9,17 +9,29 @@ import ru.yandex.market_app.model.ProductAction;
 
 public interface BasketService {
 
-    Mono<Void> changeProductCountFromStartPage(@NonNull Long id, @NonNull ProductAction productAction);
+    Mono<Void> changeProductCountFromStartPage(
+        @NonNull Long userId,
+        @NonNull Long id,
+        @NonNull ProductAction productAction
+    );
 
-    Mono<Void> changeProductCountFromItemPage(@NonNull Long id, @NonNull ProductAction productAction);
+    Mono<Void> changeProductCountFromItemPage(
+        @NonNull Long userId,
+        @NonNull Long id,
+        @NonNull ProductAction productAction
+    );
 
-    Mono<Void> changeProductCountFromCartPage(@NonNull Long id, @NonNull ProductAction productAction);
+    Mono<Void> changeProductCountFromCartPage(
+        @NonNull Long userId,
+        @NonNull Long id,
+        @NonNull ProductAction productAction
+    );
 
-    Mono<GetProductCartModelDto> getCart();
+    Mono<GetProductCartModelDto> getCart(@NonNull Long userId);
 
-    Mono<BasketDto> findLazyActiveBasket();
+    Mono<BasketDto> findLazyActiveBasket(@NonNull Long userId);
 
-    Mono<Basket> getReferenceById(Long id);
+    Mono<Basket> getReferenceById(@NonNull Long userId, @NonNull Long id);
 
-    Mono<Void> closeActiveBasket(Long basketId);
+    Mono<Void> closeActiveBasket(@NonNull Long userId, @NonNull Long basketId);
 }

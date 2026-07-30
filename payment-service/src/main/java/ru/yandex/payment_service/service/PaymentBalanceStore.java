@@ -16,62 +16,92 @@ import java.util.concurrent.atomic.AtomicLong;
 @Component
 public final class PaymentBalanceStore {
 
-    private final AtomicLong balanceInMinorUnits;
-    private final ConcurrentMap<UUID, StoredPayment> completedPayments = new ConcurrentHashMap<>();
+    private final long initialBalanceInMinorUnits;
+    private final ConcurrentMap<UUID, Account> accounts = new ConcurrentHashMap<>();
 
     public PaymentBalanceStore(PaymentBalanceProperties properties) {
-        this.balanceInMinorUnits = new AtomicLong(
-            MoneyConverter.nonNegativeAmountToMinorUnits(properties.initial())
+        this.initialBalanceInMinorUnits = MoneyConverter.nonNegativeAmountToMinorUnits(
+            properties.initial()
         );
     }
 
-    public BigDecimal getBalance() {
-        return MoneyConverter.fromMinorUnits(balanceInMinorUnits.get());
+    public BigDecimal getBalance(UUID customerId) {
+        return account(customerId).getBalance();
     }
 
-    public PaymentResult debit(UUID requestId, BigDecimal amount) {
+    public PaymentResult debit(UUID customerId, UUID requestId, BigDecimal amount) {
         if (requestId == null) {
             throw new InvalidPaymentRequestException("Идентификатор запроса не указан");
         }
 
         long amountInMinorUnits = MoneyConverter.positiveAmountToMinorUnits(amount);
-        StoredPayment payment = completedPayments.compute(
-            requestId,
-            (id, completedPayment) -> resolvePayment(id, amountInMinorUnits, completedPayment)
-        );
-
-        return payment.toResult();
+        return account(customerId).debit(requestId, amountInMinorUnits);
     }
 
-    private StoredPayment resolvePayment(
-        UUID requestId,
-        long amountInMinorUnits,
-        StoredPayment completedPayment
-    ) {
-        if (completedPayment != null) {
-            if (completedPayment.amountInMinorUnits() != amountInMinorUnits) {
-                throw new IdempotencyConflictException(requestId);
-            }
-            return completedPayment;
+    private Account account(UUID customerId) {
+        if (customerId == null) {
+            throw new InvalidPaymentRequestException("Идентификатор покупателя не указан");
         }
 
-        long remainingBalance = debitAtomically(amountInMinorUnits);
-        return new StoredPayment(requestId, amountInMinorUnits, remainingBalance);
+        return accounts.computeIfAbsent(customerId, this::newAccount);
     }
 
-    private long debitAtomically(long amountInMinorUnits) {
-        while (true) {
-            long currentBalance = balanceInMinorUnits.get();
-            if (currentBalance < amountInMinorUnits) {
-                throw new InsufficientFundsException(
-                    MoneyConverter.fromMinorUnits(currentBalance),
-                    MoneyConverter.fromMinorUnits(amountInMinorUnits)
-                );
+    private Account newAccount(UUID ignoredCustomerId) {
+        return new Account(initialBalanceInMinorUnits);
+    }
+
+    private static final class Account {
+
+        private final AtomicLong balanceInMinorUnits;
+        private final ConcurrentMap<UUID, StoredPayment> completedPayments =
+            new ConcurrentHashMap<>();
+
+        private Account(long initialBalanceInMinorUnits) {
+            this.balanceInMinorUnits = new AtomicLong(initialBalanceInMinorUnits);
+        }
+
+        private BigDecimal getBalance() {
+            return MoneyConverter.fromMinorUnits(balanceInMinorUnits.get());
+        }
+
+        private PaymentResult debit(UUID requestId, long amountInMinorUnits) {
+            StoredPayment payment = completedPayments.compute(
+                requestId,
+                (id, completedPayment) -> resolvePayment(id, amountInMinorUnits, completedPayment)
+            );
+            return payment.toResult();
+        }
+
+        private StoredPayment resolvePayment(
+            UUID requestId,
+            long amountInMinorUnits,
+            StoredPayment completedPayment
+        ) {
+            if (completedPayment != null) {
+                if (completedPayment.amountInMinorUnits() != amountInMinorUnits) {
+                    throw new IdempotencyConflictException(requestId);
+                }
+                return completedPayment;
             }
 
-            long remainingBalance = currentBalance - amountInMinorUnits;
-            if (balanceInMinorUnits.compareAndSet(currentBalance, remainingBalance)) {
-                return remainingBalance;
+            long remainingBalance = debitAtomically(amountInMinorUnits);
+            return new StoredPayment(requestId, amountInMinorUnits, remainingBalance);
+        }
+
+        private long debitAtomically(long amountInMinorUnits) {
+            while (true) {
+                long currentBalance = balanceInMinorUnits.get();
+                if (currentBalance < amountInMinorUnits) {
+                    throw new InsufficientFundsException(
+                        MoneyConverter.fromMinorUnits(currentBalance),
+                        MoneyConverter.fromMinorUnits(amountInMinorUnits)
+                    );
+                }
+
+                long remainingBalance = currentBalance - amountInMinorUnits;
+                if (balanceInMinorUnits.compareAndSet(currentBalance, remainingBalance)) {
+                    return remainingBalance;
+                }
             }
         }
     }

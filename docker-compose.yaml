@@ -12,6 +12,8 @@ services:
         condition: service_healthy
       payment-service:
         condition: service_healthy
+      keycloak:
+        condition: service_healthy
     environment:
       HOST: market-db
       PORT: 5432
@@ -21,6 +23,10 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       PAYMENT_SERVICE_BASE_URL: http://payment-service:8081
+      PAYMENT_OAUTH_TOKEN_URI: http://keycloak:8080/realms/market/protocol/openid-connect/token
+      PAYMENT_OAUTH_CLIENT_ID: market-app
+      PAYMENT_OAUTH_CLIENT_SECRET: ${PAYMENT_OAUTH_CLIENT_SECRET:?Set PAYMENT_OAUTH_CLIENT_SECRET}
+      PAYMENT_RETRY_DELAY: 200ms
 
   payment-service:
     build:
@@ -28,14 +34,43 @@ services:
       target: payment-service
     ports:
       - "8081:8081"
+    depends_on:
+      keycloak:
+        condition: service_healthy
     environment:
       PAYMENT_INITIAL_BALANCE: "1000000.00"
+      PAYMENT_OAUTH_ISSUER_URI: http://localhost:8082/realms/market
+      PAYMENT_OAUTH_JWK_SET_URI: http://keycloak:8080/realms/market/protocol/openid-connect/certs
+      PAYMENT_OAUTH_AUDIENCE: payment-service
+      PAYMENT_OAUTH_AUTHORIZED_CLIENT_ID: market-app
     healthcheck:
-      test: [ "CMD-SHELL", "wget -q -O - http://localhost:8081/api/v1/balance >/dev/null || exit 1" ]
+      test: [ "CMD-SHELL", "wget -q -O - http://localhost:8081/actuator/health >/dev/null || exit 1" ]
       interval: 5s
       timeout: 3s
       retries: 10
       start_period: 10s
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.0
+    command: start-dev --import-realm
+    ports:
+      - "8082:8080"
+    volumes:
+      - ./keycloak/market-realm.json:/opt/keycloak/data/import/market-realm.json:ro
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?Set KEYCLOAK_ADMIN_PASSWORD}
+      KC_HEALTH_ENABLED: "true"
+      KC_HOSTNAME: http://localhost:8082
+      PAYMENT_OAUTH_CLIENT_SECRET: ${PAYMENT_OAUTH_CLIENT_SECRET:?Set PAYMENT_OAUTH_CLIENT_SECRET}
+    healthcheck:
+      test: >-
+        bash -c "{ printf 'HEAD /health/ready HTTP/1.0\r\n\r\n' >&0;
+        grep 'HTTP/1.0 200'; } 0<>/dev/tcp/localhost/9000"
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
 
   market-db:
     image: postgres:17.2

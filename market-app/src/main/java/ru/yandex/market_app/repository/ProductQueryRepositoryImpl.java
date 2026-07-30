@@ -15,17 +15,20 @@ public class ProductQueryRepositoryImpl implements ProductQueryRepository {
                title,
                price,
                count AS product_count
-        FROM market.order_item
-        WHERE order_id = :orderId
-        ORDER BY title, product_id
+        FROM market.order_item oi
+        JOIN market."order" o ON o.id = oi.order_id
+        WHERE oi.order_id = :orderId
+          AND o.user_id = :userId
+        ORDER BY oi.title, oi.product_id
         """;
 
     private final DatabaseClient databaseClient;
 
     @Override
-    public Flux<ItemDto> findOrderItems(Long orderId) {
+    public Flux<ItemDto> findOrderItems(Long orderId, Long userId) {
         return databaseClient.sql(ORDER_ITEMS_QUERY)
             .bind("orderId", orderId)
+            .bind("userId", userId)
             .map((row, metadata) -> ItemDto.builder()
                 .id(row.get("id", Long.class))
                 .title(row.get("title", String.class))

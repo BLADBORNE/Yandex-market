@@ -13,16 +13,20 @@ import java.time.Duration;
 public record PaymentClientProperties(
     @NotNull URI baseUrl,
     @NotNull Duration connectTimeout,
-    @NotNull Duration responseTimeout
+    @NotNull Duration responseTimeout,
+    @NotNull Duration retryDelay
 ) {
 
-    @AssertTrue(message = "Таймауты payment-service должны быть больше нуля")
-    public boolean areTimeoutsPositive() {
+    @AssertTrue(message = "Таймауты и задержка повтора payment-service должны быть больше нуля")
+    public boolean areDurationsPositive() {
         return connectTimeout != null
             && responseTimeout != null
+            && retryDelay != null
             && !connectTimeout.isZero()
             && !connectTimeout.isNegative()
             && !responseTimeout.isZero()
-            && !responseTimeout.isNegative();
+            && !responseTimeout.isNegative()
+            && !retryDelay.isZero()
+            && !retryDelay.isNegative();
     }
 }

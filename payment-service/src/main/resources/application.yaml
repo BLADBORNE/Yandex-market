@@ -4,6 +4,13 @@ spring:
   jackson:
     deserialization:
       fail-on-unknown-properties: true
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${PAYMENT_OAUTH_ISSUER_URI:http://localhost:8082/realms/market}
+          jwk-set-uri: ${PAYMENT_OAUTH_JWK_SET_URI:http://localhost:8082/realms/market/protocol/openid-connect/certs}
+          audiences: ${PAYMENT_OAUTH_AUDIENCE:payment-service}
 
 server:
   port: ${PAYMENT_SERVICE_PORT:8081}
@@ -11,3 +18,15 @@ server:
 payment:
   balance:
     initial: ${PAYMENT_INITIAL_BALANCE:1000000.00}
+  security:
+    jwt:
+      authorized-client-id: ${PAYMENT_OAUTH_AUTHORIZED_CLIENT_ID:market-app}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never

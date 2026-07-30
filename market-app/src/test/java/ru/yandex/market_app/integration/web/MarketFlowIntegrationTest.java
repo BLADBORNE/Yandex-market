@@ -2,6 +2,7 @@ package ru.yandex.market_app.integration.web;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.web.embedded.netty.NettyWebServer;
 import org.springframework.boot.web.reactive.context.ReactiveWebServerApplicationContext;
 import org.springframework.http.MediaType;
@@ -24,11 +25,31 @@ class MarketFlowIntegrationTest extends ReactiveIntegrationTestSupport {
     @Autowired
     private ReactiveWebServerApplicationContext applicationContext;
 
+    @LocalServerPort
+    private int serverPort;
+
+    @Test
+    void shouldServePublicCatalogThroughRealNettyPort() {
+        StepVerifier.create(resetDatabase()).verifyComplete();
+        assertInstanceOf(NettyWebServer.class, applicationContext.getWebServer());
+
+        WebTestClient.bindToServer()
+            .baseUrl("http://127.0.0.1:" + serverPort)
+            .build()
+            .get()
+            .uri("/items")
+            .exchange()
+            .expectStatus().isOk()
+            .expectHeader().contentTypeCompatibleWith(MediaType.TEXT_HTML)
+            .expectBody(String.class)
+            .value(body -> assertTrue(body.contains("Витрина магазина")));
+    }
+
     @Test
     void shouldRejectBuyingAnEmptyCart() {
         StepVerifier.create(resetDatabase()).verifyComplete();
 
-        webTestClient.post()
+        authenticatedAsAlice(webTestClient).post()
             .uri("/buy")
             .exchange()
             .expectStatus().isNotFound()
@@ -38,11 +59,12 @@ class MarketFlowIntegrationTest extends ReactiveIntegrationTestSupport {
     }
 
     @Test
-    void shouldRunCompleteCatalogCartCheckoutAndOrderFlowOnNetty() {
+    void shouldRunCompleteCatalogCartCheckoutAndOrderFlow() {
         StepVerifier.create(resetDatabase()).verifyComplete();
         assertInstanceOf(NettyWebServer.class, applicationContext.getWebServer());
+        WebTestClient aliceClient = authenticatedAsAlice(webTestClient);
 
-        webTestClient.get()
+        aliceClient.get()
             .uri("/items?search=Ноутбук&sort=ALPHA&pageNumber=1&pageSize=5")
             .exchange()
             .expectStatus().isOk()
@@ -53,7 +75,7 @@ class MarketFlowIntegrationTest extends ReactiveIntegrationTestSupport {
                 assertTrue(body.contains("Страница: 1"));
             });
 
-        webTestClient.get()
+        aliceClient.get()
             .uri("/images/product1.jpg")
             .exchange()
             .expectStatus().isOk()
@@ -61,7 +83,7 @@ class MarketFlowIntegrationTest extends ReactiveIntegrationTestSupport {
             .expectBody(byte[].class)
             .value(image -> assertTrue(image.length > 0));
 
-        webTestClient.post()
+        aliceClient.post()
             .uri("/items")
             .body(BodyInserters.fromFormData("id", "1")
                 .with("search", "")
@@ -76,7 +98,7 @@ class MarketFlowIntegrationTest extends ReactiveIntegrationTestSupport {
                 "/items?search=&sort=NO&pageNumber=1&pageSize=5"
             );
 
-        webTestClient.post()
+        aliceClient.post()
             .uri("/cart/items")
             .body(BodyInserters.fromFormData("id", "1").with("action", "PLUS"))
             .exchange()
@@ -88,7 +110,7 @@ class MarketFlowIntegrationTest extends ReactiveIntegrationTestSupport {
                 assertTrue(body.contains("Итого: 109998"));
             });
 
-        var buyResult = webTestClient.post()
+        var buyResult = aliceClient.post()
             .uri("/buy")
             .exchange()
             .expectStatus().is3xxRedirection()
@@ -98,7 +120,7 @@ class MarketFlowIntegrationTest extends ReactiveIntegrationTestSupport {
         String orderLocation = buyResult.getResponseHeaders().getFirst("Location");
         assertFalse(orderLocation == null || orderLocation.isBlank());
 
-        webTestClient.get()
+        aliceClient.get()
             .uri(orderLocation)
             .exchange()
             .expectStatus().isOk()
@@ -109,7 +131,7 @@ class MarketFlowIntegrationTest extends ReactiveIntegrationTestSupport {
                 assertTrue(body.contains("Сумма: 109998"));
             });
 
-        webTestClient.get()
+        aliceClient.get()
             .uri("/orders")
             .exchange()
             .expectStatus().isOk()
@@ -119,7 +141,7 @@ class MarketFlowIntegrationTest extends ReactiveIntegrationTestSupport {
                 assertTrue(body.contains("109998"));
             });
 
-        webTestClient.get()
+        aliceClient.get()
             .uri("/cart/items")
             .exchange()
             .expectStatus().isOk()

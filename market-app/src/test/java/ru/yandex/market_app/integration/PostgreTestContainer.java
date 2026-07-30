@@ -5,6 +5,8 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.r2dbc.core.DatabaseClient;
+import org.springframework.transaction.NoTransactionException;
+import org.springframework.transaction.reactive.TransactionSynchronizationManager;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
@@ -15,10 +17,11 @@ import ru.yandex.market_app.payment.PaymentReceipt;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.BiFunction;
 
 @TestConfiguration(proxyBeanMethods = false)
 public class PostgreTestContainer {
@@ -47,58 +50,128 @@ public class PostgreTestContainer {
         private static final BigDecimal DEFAULT_BALANCE = new BigDecimal("1000000.00");
 
         private final DatabaseClient databaseClient;
-        private final AtomicReference<BiFunction<java.util.UUID, BigDecimal, Mono<PaymentReceipt>>> payment =
+        private final AtomicReference<PaymentFunction> payment =
             new AtomicReference<>(this::successfulPayment);
         private final List<UUID> requestIds = new CopyOnWriteArrayList<>();
+        private final List<UUID> accountIds = new CopyOnWriteArrayList<>();
+        private final ConcurrentMap<UUID, PaymentReceipt> completedPayments =
+            new ConcurrentHashMap<>();
+        private final AtomicInteger debitCount = new AtomicInteger();
 
         private TestPaymentGateway(DatabaseClient databaseClient) {
             this.databaseClient = databaseClient;
         }
 
         @Override
-        public Mono<BigDecimal> getBalance() {
+        public Mono<BigDecimal> getBalance(UUID accountId) {
+            accountIds.add(accountId);
             return Mono.just(DEFAULT_BALANCE);
         }
 
         @Override
-        public Mono<PaymentReceipt> pay(java.util.UUID requestId, BigDecimal amount) {
+        public Mono<PaymentReceipt> pay(UUID accountId, UUID requestId, BigDecimal amount) {
+            accountIds.add(accountId);
             requestIds.add(requestId);
-            return payment.get().apply(requestId, amount);
+            return payment.get().apply(accountId, requestId, amount);
         }
 
         public void failPayment(RuntimeException exception) {
-            payment.set((requestId, amount) -> Mono.error(exception));
+            payment.set((accountId, requestId, amount) -> Mono.error(exception));
         }
 
-        public void failLocalCloseAfterNextSuccessfulPayment() {
-            var injectFailure = new AtomicBoolean(true);
-            payment.set((requestId, amount) -> injectFailure.compareAndSet(true, false)
-                ? databaseClient.sql("""
-                        UPDATE market.basket
-                        SET status = 'CLOSED'
-                        WHERE status = 'ACTIVE'
-                        """)
-                    .fetch()
-                    .rowsUpdated()
-                    .then(successfulPayment(requestId, amount))
-                : successfulPayment(requestId, amount));
+        public void failFirstPaymentThen(
+            RuntimeException firstException,
+            RuntimeException subsequentException
+        ) {
+            var invocation = new AtomicInteger();
+            payment.set((accountId, requestId, amount) ->
+                Mono.error(invocation.getAndIncrement() == 0
+                    ? firstException
+                    : subsequentException));
+        }
+
+        public void loseNextPaymentResponses(int attempts, RuntimeException exception) {
+            var remainingLostResponses = new AtomicInteger(attempts);
+            payment.set((accountId, requestId, amount) ->
+                successfulPayment(accountId, requestId, amount)
+                    .flatMap(receipt ->
+                        remainingLostResponses.getAndUpdate(current ->
+                            Math.max(0, current - 1)
+                        ) > 0
+                            ? Mono.error(exception)
+                            : Mono.just(receipt)));
+        }
+
+        public void succeedPayments() {
+            payment.set(this::successfulPayment);
+        }
+
+        public void assertPreparedCheckoutOutsideTransaction() {
+            payment.set((accountId, requestId, amount) ->
+                TransactionSynchronizationManager.forCurrentTransaction()
+                    .flatMap(transaction -> Mono.<PaymentReceipt>error(
+                        new AssertionError("HTTP-платёж выполняется внутри DB-транзакции")
+                    ))
+                    .onErrorResume(NoTransactionException.class, error -> databaseClient.sql("""
+                            SELECT COUNT(*) AS prepared
+                            FROM market."order" o
+                            JOIN market.basket b ON b.id = o.basket_id
+                            WHERE o.payment_account_id = :accountId
+                              AND o.payment_request_id = :requestId
+                              AND o.sum = :amount
+                              AND o.status = 'PENDING'
+                              AND b.status = 'CHECKOUT'
+                            """)
+                        .bind("accountId", accountId)
+                        .bind("requestId", requestId)
+                        .bind("amount", amount)
+                        .map((row, metadata) -> row.get("prepared", Long.class))
+                        .one()
+                        .filter(prepared -> prepared == 1L)
+                        .switchIfEmpty(Mono.error(new AssertionError(
+                            "Ожидающий заказ не был зафиксирован до HTTP-платежа"
+                        )))
+                        .then(successfulPayment(accountId, requestId, amount))));
         }
 
         public List<UUID> requestIds() {
             return List.copyOf(requestIds);
         }
 
+        public List<UUID> accountIds() {
+            return List.copyOf(accountIds);
+        }
+
+        public int debitCount() {
+            return debitCount.get();
+        }
+
         public void reset() {
             payment.set(this::successfulPayment);
             requestIds.clear();
+            accountIds.clear();
+            completedPayments.clear();
+            debitCount.set(0);
         }
 
-        private Mono<PaymentReceipt> successfulPayment(java.util.UUID requestId, BigDecimal amount) {
-            return Mono.just(new PaymentReceipt(
+        private Mono<PaymentReceipt> successfulPayment(UUID accountId, UUID requestId, BigDecimal amount) {
+            return Mono.fromSupplier(() -> completedPayments.computeIfAbsent(
                 requestId,
-                amount,
-                DEFAULT_BALANCE.subtract(amount)
+                ignoredRequestId -> {
+                    debitCount.incrementAndGet();
+                    return new PaymentReceipt(
+                        requestId,
+                        amount,
+                        DEFAULT_BALANCE.subtract(amount)
+                    );
+                }
             ));
+        }
+
+        @FunctionalInterface
+        private interface PaymentFunction {
+
+            Mono<PaymentReceipt> apply(UUID accountId, UUID requestId, BigDecimal amount);
         }
     }
 }

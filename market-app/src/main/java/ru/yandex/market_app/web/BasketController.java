@@ -3,6 +3,7 @@ package ru.yandex.market_app.web;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Controller;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
@@ -14,6 +15,7 @@ import ru.yandex.market_app.dto.CartActionRequest;
 import ru.yandex.market_app.dto.GetProductCartModelDto;
 import ru.yandex.market_app.payment.PaymentGateway;
 import ru.yandex.market_app.payment.PaymentServiceUnavailableException;
+import ru.yandex.market_app.security.MarketUserPrincipal;
 import ru.yandex.market_app.service.BasketService;
 import ru.yandex.market_app.util.TemplateAttributeNameUtil;
 import ru.yandex.market_app.util.TemplateNameUtil;
@@ -28,27 +30,38 @@ public final class BasketController {
     @GetMapping("/cart/items")
     public Mono<String> getCart(
         @RequestParam(required = false) String paymentError,
+        @AuthenticationPrincipal MarketUserPrincipal principal,
         Model model
     ) {
-        return renderCart(model, paymentError);
+        return renderCart(principal, model, paymentError);
     }
 
     @PostMapping("/cart/items")
     public Mono<String> changeProductCountFromCartPage(
         @Valid @ModelAttribute CartActionRequest request,
+        @AuthenticationPrincipal MarketUserPrincipal principal,
         Model model
     ) {
-        return basketService.changeProductCountFromCartPage(request.getId(), request.getAction())
-            .then(Mono.defer(() -> renderCart(model, null)));
+        return basketService.changeProductCountFromCartPage(
+                principal.userId(),
+                request.getId(),
+                request.getAction()
+            )
+            .then(Mono.defer(() -> renderCart(principal, model, null)));
     }
 
-    private Mono<String> renderCart(Model model, String paymentError) {
-        return basketService.getCart()
-            .flatMap(cart -> getPaymentState(cart, paymentError)
+    private Mono<String> renderCart(
+        MarketUserPrincipal principal,
+        Model model,
+        String paymentError
+    ) {
+        return basketService.getCart(principal.userId())
+            .flatMap(cart -> getPaymentState(principal, cart, paymentError)
                 .map(paymentState -> addCartToModel(cart, paymentState, model)));
     }
 
     private Mono<CartPaymentState> getPaymentState(
+        MarketUserPrincipal principal,
         GetProductCartModelDto cart,
         String paymentError
     ) {
@@ -60,7 +73,7 @@ public final class BasketController {
             return Mono.just(CartPaymentState.rejected());
         }
 
-        return paymentGateway.getBalance()
+        return paymentGateway.getBalance(principal.paymentAccountId())
             .map(balance -> balance.compareTo(cart.total()) >= 0
                 ? CartPaymentState.available(balance)
                 : CartPaymentState.insufficient(balance, cart.total()))

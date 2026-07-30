@@ -16,11 +16,15 @@ public final class PaymentService {
         this.paymentBalanceStore = paymentBalanceStore;
     }
 
-    public Mono<BigDecimal> getBalance() {
-        return Mono.fromSupplier(paymentBalanceStore::getBalance);
+    public Mono<BigDecimal> getBalance(UUID customerId) {
+        return Mono.fromSupplier(() -> paymentBalanceStore.getBalance(customerId));
     }
 
-    public Mono<PaymentResult> makePayment(UUID requestId, BigDecimal amount) {
-        return Mono.fromSupplier(() -> paymentBalanceStore.debit(requestId, amount));
+    public Mono<PaymentResult> makePayment(
+        UUID customerId,
+        UUID requestId,
+        BigDecimal amount
+    ) {
+        return Mono.fromSupplier(() -> paymentBalanceStore.debit(customerId, requestId, amount));
     }
 }
