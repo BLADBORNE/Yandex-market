@@ -48,4 +48,13 @@ public record CartPaymentState(
             "Сервис платежей недоступен. Оформление заказа временно невозможно."
         );
     }
+
+    public static CartPaymentState rejected() {
+        return new CartPaymentState(
+            CheckoutStatus.PAYMENT_REJECTED,
+            false,
+            null,
+            "Сервис платежей отклонил запрос. Проверьте состав корзины и повторите позже."
+        );
+    }
 }

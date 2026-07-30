@@ -31,7 +31,7 @@ public class GeneratedPaymentGateway implements PaymentGateway {
             .switchIfEmpty(Mono.error(new PaymentServiceUnavailableException(
                 "Сервис платежей вернул пустой ответ"
             )))
-            .map(response -> response.getBalance())
+            .map(response -> validateBalance(response.getBalance()))
             .onErrorMap(this::mapBalanceError);
     }
 
@@ -46,12 +46,43 @@ public class GeneratedPaymentGateway implements PaymentGateway {
             .switchIfEmpty(Mono.error(new PaymentServiceUnavailableException(
                 "Сервис платежей вернул пустой ответ"
             )))
-            .map(response -> new PaymentReceipt(
+            .map(response -> validatePaymentResponse(
+                requestId,
+                amount,
                 response.getRequestId(),
                 response.getAmount(),
                 response.getRemainingBalance()
             ))
             .onErrorMap(error -> mapPaymentError(error, amount));
+    }
+
+    private BigDecimal validateBalance(BigDecimal balance) {
+        if (balance == null || balance.signum() < 0) {
+            throw new PaymentServiceUnavailableException(
+                "Сервис платежей вернул некорректный баланс"
+            );
+        }
+        return balance;
+    }
+
+    private PaymentReceipt validatePaymentResponse(
+        UUID expectedRequestId,
+        BigDecimal expectedAmount,
+        UUID actualRequestId,
+        BigDecimal actualAmount,
+        BigDecimal remainingBalance
+    ) {
+        if (!expectedRequestId.equals(actualRequestId)
+            || actualAmount == null
+            || expectedAmount.compareTo(actualAmount) != 0
+            || remainingBalance == null
+            || remainingBalance.signum() < 0) {
+            throw new PaymentServiceUnavailableException(
+                "Сервис платежей вернул некорректный ответ"
+            );
+        }
+
+        return new PaymentReceipt(actualRequestId, actualAmount, remainingBalance);
     }
 
     private Throwable mapBalanceError(Throwable error) {

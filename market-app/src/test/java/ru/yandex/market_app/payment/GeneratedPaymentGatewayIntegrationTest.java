@@ -125,16 +125,104 @@ class GeneratedPaymentGatewayIntegrationTest {
             .verify();
     }
 
+    @Test
+    void shouldMapServerErrorAndTimeoutToUnavailable() {
+        server = HttpServer.create()
+            .host("127.0.0.1")
+            .port(0)
+            .route(routes -> {
+                routes.get("/api/v1/balance", (request, response) -> response
+                    .status(500)
+                    .header("Content-Type", MediaType.APPLICATION_JSON_VALUE)
+                    .sendString(Mono.just("""
+                        {"code":"INTERNAL_ERROR","message":"failure"}
+                        """)));
+                routes.post("/api/v1/payment", (request, response) -> response
+                    .header("Content-Type", MediaType.APPLICATION_JSON_VALUE)
+                    .sendString(Mono.delay(Duration.ofSeconds(1))
+                        .thenReturn("""
+                            {
+                              "requestId":"00000000-0000-0000-0000-000000000001",
+                              "amount":1.00,
+                              "remainingBalance":10.00
+                            }
+                            """)));
+            })
+            .bindNow();
+
+        StepVerifier.create(gateway(Duration.ofMillis(100)).getBalance())
+            .expectError(PaymentServiceUnavailableException.class)
+            .verify();
+
+        StepVerifier.create(gateway(Duration.ofMillis(100))
+                .pay(UUID.randomUUID(), BigDecimal.ONE))
+            .expectError(PaymentServiceUnavailableException.class)
+            .verify();
+    }
+
+    @Test
+    void shouldMapIdempotencyConflictToRejectedPayment() {
+        server = HttpServer.create()
+            .host("127.0.0.1")
+            .port(0)
+            .route(routes -> routes.post("/api/v1/payment", (request, response) -> response
+                .status(409)
+                .header("Content-Type", MediaType.APPLICATION_JSON_VALUE)
+                .sendString(Mono.just("""
+                    {
+                      "code":"IDEMPOTENCY_CONFLICT",
+                      "message":"requestId already used"
+                    }
+                    """))))
+            .bindNow();
+
+        StepVerifier.create(gateway().pay(UUID.randomUUID(), BigDecimal.ONE))
+            .expectErrorMatches(error -> error instanceof PaymentRejectedException
+                && error.getMessage().contains("requestId"))
+            .verify();
+    }
+
+    @Test
+    void shouldRejectMismatchedSuccessfulPaymentResponse() {
+        UUID expectedRequestId = UUID.randomUUID();
+        server = HttpServer.create()
+            .host("127.0.0.1")
+            .port(0)
+            .route(routes -> routes.post("/api/v1/payment", (request, response) -> response
+                .header("Content-Type", MediaType.APPLICATION_JSON_VALUE)
+                .sendString(Mono.just("""
+                    {
+                      "requestId":"00000000-0000-0000-0000-000000000001",
+                      "amount":2.00,
+                      "remainingBalance":10.00
+                    }
+                    """))))
+            .bindNow();
+
+        StepVerifier.create(gateway().pay(expectedRequestId, BigDecimal.ONE))
+            .expectErrorMatches(error -> error instanceof PaymentServiceUnavailableException
+                && error.getMessage().contains("некорректный ответ"))
+            .verify();
+    }
+
     private GeneratedPaymentGateway gateway() {
-        return gateway(server.port());
+        return gateway(server.port(), Duration.ofSeconds(1));
     }
 
     private GeneratedPaymentGateway gateway(int port) {
+        return gateway(port, Duration.ofSeconds(1));
+    }
+
+    private GeneratedPaymentGateway gateway(Duration responseTimeout) {
+        return gateway(server.port(), responseTimeout);
+    }
+
+    private GeneratedPaymentGateway gateway(int port, Duration responseTimeout) {
         ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
         var properties = new PaymentClientProperties(
             URI.create("http://127.0.0.1:" + port),
             Duration.ofMillis(300),
-            Duration.ofSeconds(1)
+            responseTimeout
         );
         WebClient webClient = ApiClient.buildWebClientBuilder(objectMapper)
             .clientConnector(new org.springframework.http.client.reactive.ReactorClientHttpConnector(

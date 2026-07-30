@@ -46,7 +46,6 @@ class BasketServiceIntegrationTest extends ReactiveIntegrationTestSupport {
         var scenario = resetDatabase()
             .then(basketService.changeProductCountFromStartPage(PRODUCT_ID, PLUS))
             .then(basketService.changeProductCountFromItemPage(PRODUCT_ID, PLUS))
-            .doOnNext(product -> assertEquals(2, product.count()))
             .then(basketService.changeProductCountFromCartPage(PRODUCT_ID, MINUS))
             .then(basketService.getCart())
             .doOnNext(cart -> {

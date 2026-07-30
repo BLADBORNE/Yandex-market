@@ -24,18 +24,19 @@ public class ProductCatalogProvider {
     public Mono<CachedProductCatalog> getCatalog() {
         return productCatalogCache.get()
             .doOnNext(catalog -> log.debug("Каталог товаров загружен из Redis"))
+            .switchIfEmpty(Mono.defer(this::refresh))
             .onErrorResume(ProductCacheAccessException.class, error -> {
                 log.warn("Redis недоступен при чтении каталога, используем PostgreSQL: {}", error.getMessage());
-                return Mono.empty();
-            })
-            .switchIfEmpty(Mono.defer(this::refresh));
+                return loadFromDatabase(false);
+            });
     }
 
     public Mono<CachedProduct> getProduct(Long id) {
         return getCatalog()
             .flatMap(catalog -> Mono.justOrEmpty(catalog.findById(id))
-                .switchIfEmpty(Mono.defer(() -> refresh()
-                    .flatMap(refreshed -> Mono.justOrEmpty(refreshed.findById(id))))));
+                .switchIfEmpty(Mono.defer(() -> productRepository.findById(id)
+                    .map(CachedProduct::from)
+                    .flatMap(product -> refresh().thenReturn(product)))));
     }
 
     public Mono<CachedProductCatalog> getCatalogContaining(Set<Long> productIds) {
@@ -46,18 +47,24 @@ public class ProductCatalogProvider {
     }
 
     public Mono<CachedProductCatalog> refresh() {
+        return loadFromDatabase(true);
+    }
+
+    private Mono<CachedProductCatalog> loadFromDatabase(boolean updateCache) {
         return productRepository.findAll()
             .map(CachedProduct::from)
             .sort(Comparator.comparing(CachedProduct::id))
             .collectList()
             .map(CachedProductCatalog::new)
-            .flatMap(catalog -> productCatalogCache.put(catalog)
+            .flatMap(catalog -> updateCache
+                ? productCatalogCache.put(catalog)
                 .doOnSuccess(ignored -> log.debug("Каталог товаров записан в Redis"))
                 .onErrorResume(ProductCacheAccessException.class, error -> {
                     log.warn("Не удалось обновить Redis, возвращаем данные PostgreSQL: {}", error.getMessage());
                     return Mono.empty();
                 })
-                .thenReturn(catalog));
+                .thenReturn(catalog)
+                : Mono.just(catalog));
     }
 
     public Mono<Void> evict() {

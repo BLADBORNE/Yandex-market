@@ -71,12 +71,12 @@ class ProductCatalogProviderTest {
         when(productCatalogCache.get())
             .thenReturn(Mono.error(new ProductCacheAccessException("redis read failed")));
         when(productRepository.findAll()).thenReturn(Flux.just(product(1L)));
-        when(productCatalogCache.put(new CachedProductCatalog(List.of(cachedProduct(1L)))))
-            .thenReturn(Mono.error(new ProductCacheAccessException("redis write failed")));
 
         StepVerifier.create(provider.getCatalog())
             .assertNext(catalog -> org.junit.jupiter.api.Assertions.assertEquals(1, catalog.products().size()))
             .verifyComplete();
+
+        verify(productCatalogCache, never()).put(new CachedProductCatalog(List.of(cachedProduct(1L))));
     }
 
     @Test
@@ -100,6 +100,19 @@ class ProductCatalogProviderTest {
         StepVerifier.create(provider.getCatalog())
             .expectErrorMatches(error -> error == databaseFailure)
             .verify();
+    }
+
+    @Test
+    void shouldCheckDatabaseOnlyOnceForMissingProduct() {
+        var catalog = new CachedProductCatalog(List.of(cachedProduct(1L)));
+        when(productCatalogCache.get()).thenReturn(Mono.just(catalog));
+        when(productRepository.findById(99L)).thenReturn(Mono.empty());
+
+        StepVerifier.create(provider.getProduct(99L))
+            .verifyComplete();
+
+        verify(productRepository).findById(99L);
+        verify(productRepository, never()).findAll();
     }
 
     private Product product(Long id) {

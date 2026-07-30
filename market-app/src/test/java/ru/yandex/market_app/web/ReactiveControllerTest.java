@@ -23,6 +23,7 @@ import ru.yandex.market_app.exception.NotRemoveItemException;
 import ru.yandex.market_app.exception.OperationNotSupportedException;
 import ru.yandex.market_app.payment.InsufficientFundsException;
 import ru.yandex.market_app.payment.PaymentGateway;
+import ru.yandex.market_app.payment.PaymentRejectedException;
 import ru.yandex.market_app.payment.PaymentServiceUnavailableException;
 import ru.yandex.market_app.service.BasketService;
 import ru.yandex.market_app.service.OrderService;
@@ -157,9 +158,11 @@ class ReactiveControllerTest {
 
     @Test
     void shouldRenderProductAndUpdatedProduct() {
-        when(productService.getItem(7L)).thenReturn(Mono.just(product(7L, "Телефон", 1)));
-        when(basketService.changeProductCountFromItemPage(7L, MINUS))
+        when(productService.getItem(7L))
+            .thenReturn(Mono.just(product(7L, "Телефон", 1)))
             .thenReturn(Mono.just(product(7L, "Телефон", 0)));
+        when(basketService.changeProductCountFromItemPage(7L, MINUS))
+            .thenReturn(Mono.empty());
 
         webTestClient.get()
             .uri("/items/7")
@@ -341,6 +344,24 @@ class ReactiveControllerTest {
     }
 
     @Test
+    void shouldRecheckBalanceAfterTransientCheckoutFailure() {
+        when(basketService.getCart()).thenReturn(Mono.just(
+            cart(product(3L, "Монитор", 1), BigDecimal.valueOf(2000))
+        ));
+        when(paymentGateway.getBalance()).thenReturn(Mono.just(BigDecimal.valueOf(3000)));
+
+        webTestClient.get()
+            .uri("/cart/items?paymentError=SERVICE_UNAVAILABLE")
+            .exchange()
+            .expectStatus().isOk()
+            .expectBody(String.class)
+            .value(body -> {
+                assertTrue(body.contains("На счёте достаточно средств"));
+                assertTrue(body.contains("action=\"/buy\""));
+            });
+    }
+
+    @Test
     void shouldRenderCartMutationError() {
         when(basketService.changeProductCountFromCartPage(3L, DELETE))
             .thenReturn(Mono.error(new NotRemoveItemException("Товара нет в корзине")));
@@ -425,7 +446,8 @@ class ReactiveControllerTest {
                 BigDecimal.valueOf(500),
                 BigDecimal.valueOf(1000)
             )))
-            .thenReturn(Mono.error(new PaymentServiceUnavailableException("offline")));
+            .thenReturn(Mono.error(new PaymentServiceUnavailableException("offline")))
+            .thenReturn(Mono.error(new PaymentRejectedException("conflict")));
 
         webTestClient.post()
             .uri("/buy")
@@ -444,6 +466,32 @@ class ReactiveControllerTest {
                 "Location",
                 "/cart/items?paymentError=SERVICE_UNAVAILABLE"
             );
+
+        webTestClient.post()
+            .uri("/buy")
+            .exchange()
+            .expectStatus().is3xxRedirection()
+            .expectHeader().valueEquals(
+                "Location",
+                "/cart/items?paymentError=PAYMENT_REJECTED"
+            );
+    }
+
+    @Test
+    void shouldRenderRejectedPaymentWithoutCallingBalanceAgain() {
+        when(basketService.getCart()).thenReturn(Mono.just(
+            cart(product(3L, "Монитор", 1), BigDecimal.valueOf(2000))
+        ));
+
+        webTestClient.get()
+            .uri("/cart/items?paymentError=PAYMENT_REJECTED")
+            .exchange()
+            .expectStatus().isOk()
+            .expectBody(String.class)
+            .value(body -> {
+                assertTrue(body.contains("Сервис платежей отклонил запрос"));
+                assertTrue(body.contains("disabled"));
+            });
     }
 
     private ProductResultDto product(Long id, String title, Integer count) {

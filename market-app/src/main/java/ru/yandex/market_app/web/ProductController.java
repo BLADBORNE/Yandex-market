@@ -80,6 +80,7 @@ public class ProductController {
         Model model
     ) {
         return basketService.changeProductCountFromItemPage(id, request.getAction())
+            .then(Mono.defer(() -> productService.getItem(id)))
             .map(item -> {
                 model.addAttribute(TemplateAttributeNameUtil.ITEM, item);
                 return TemplateNameUtil.ITEM;

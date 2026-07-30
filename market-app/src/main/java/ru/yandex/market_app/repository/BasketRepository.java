@@ -35,6 +35,19 @@ public class BasketRepository {
             .one();
     }
 
+    public Mono<Basket> findActiveBasketByIdForUpdate(Long basketId) {
+        return databaseClient.sql("""
+                SELECT id, status
+                FROM market.basket
+                WHERE id = :basketId
+                  AND status = 'ACTIVE'
+                FOR UPDATE
+                """)
+            .bind("basketId", basketId)
+            .map((row, metadata) -> toBasket(row))
+            .one();
+    }
+
     public Mono<Basket> getOrCreateActiveBasket() {
         return databaseClient.sql("""
                 INSERT INTO market.basket (status)

@@ -14,6 +14,7 @@ import ru.yandex.market_app.service.OrderService;
 
 import java.math.BigDecimal;
 import java.util.NoSuchElementException;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -176,6 +177,41 @@ class OrderServiceIntegrationTest extends ReactiveIntegrationTestSupport {
                 assertEquals(0L, result.getT2());
                 assertEquals(1, result.getT3().items().size());
                 assertEquals(0, FIRST_PRODUCT_PRICE.compareTo(result.getT3().total()));
+            })
+            .verifyComplete();
+    }
+
+    @Test
+    void shouldRecoverAfterConfirmedPaymentAndRealTransactionRollback() {
+        var scenario = resetDatabase()
+            .then(basketService.changeProductCountFromStartPage(1L, PLUS))
+            .then(Mono.fromRunnable(testPaymentGateway::failLocalCloseAfterNextSuccessfulPayment))
+            .then(orderService.completeOrder())
+            .flatMap(orderId -> Mono.zip(
+                orderService.getOrder(orderId),
+                databaseClient.sql("SELECT COUNT(*) AS total FROM market.\"order\"")
+                    .map((row, metadata) -> row.get("total", Long.class))
+                    .one(),
+                databaseClient.sql("SELECT COUNT(*) AS total FROM market.order_item")
+                    .map((row, metadata) -> row.get("total", Long.class))
+                    .one(),
+                databaseClient.sql("""
+                        SELECT status
+                        FROM market.basket
+                        WHERE id = 1
+                        """)
+                    .map((row, metadata) -> row.get("status", String.class))
+                    .one()
+            ));
+
+        StepVerifier.create(scenario)
+            .assertNext(result -> {
+                assertEquals(0, FIRST_PRODUCT_PRICE.compareTo(result.getT1().totalSum()));
+                assertEquals(1L, result.getT2());
+                assertEquals(1L, result.getT3());
+                assertEquals("CLOSED", result.getT4());
+                assertEquals(2, testPaymentGateway.requestIds().size());
+                assertEquals(1, Set.copyOf(testPaymentGateway.requestIds()).size());
             })
             .verifyComplete();
     }

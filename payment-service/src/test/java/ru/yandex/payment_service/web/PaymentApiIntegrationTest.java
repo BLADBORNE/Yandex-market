@@ -166,6 +166,29 @@ class PaymentApiIntegrationTest {
             .value(response -> assertEquals("INVALID_REQUEST", response.getCode()));
     }
 
+    @Test
+    void shouldRejectUnknownJsonProperties() {
+        BigDecimal balanceBeforePayment = paymentBalanceStore.getBalance();
+
+        webTestClient.post()
+            .uri("/api/v1/payment")
+            .contentType(MediaType.APPLICATION_JSON)
+            .bodyValue("""
+                {
+                  "requestId": "%s",
+                  "amount": 1.00,
+                  "unexpected": true
+                }
+                """.formatted(UUID.randomUUID()))
+            .exchange()
+            .expectStatus().isBadRequest()
+            .expectHeader().contentTypeCompatibleWith(MediaType.APPLICATION_JSON)
+            .expectBody(ErrorResponse.class)
+            .value(response -> assertEquals("INVALID_REQUEST", response.getCode()));
+
+        assertMoneyEquals(balanceBeforePayment, paymentBalanceStore.getBalance());
+    }
+
     private void assertMoneyEquals(BigDecimal expected, BigDecimal actual) {
         assertNotNull(actual);
         assertEquals(0, expected.compareTo(actual));

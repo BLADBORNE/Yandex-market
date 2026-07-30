@@ -50,11 +50,11 @@ public class BasketServiceImpl implements BasketService {
 
     @Transactional
     @Override
-    public Mono<ProductResultDto> changeProductCountFromItemPage(
+    public Mono<Void> changeProductCountFromItemPage(
         @NonNull Long id,
         @NonNull ProductAction productAction
     ) {
-        return rejectDelete(productAction).then(performChangeProductCount(id, productAction));
+        return rejectDelete(productAction).then(performChangeProductCount(id, productAction)).then();
     }
 
     @Transactional
@@ -134,7 +134,7 @@ public class BasketServiceImpl implements BasketService {
             .then();
     }
 
-    private Mono<ProductResultDto> performChangeProductCount(Long id, ProductAction action) {
+    private Mono<Void> performChangeProductCount(Long id, ProductAction action) {
         return productRepository.findById(id)
             .switchIfEmpty(Mono.error(
                 new NoSuchElementException("Отсутствует продукт с id = %d".formatted(id))
@@ -154,7 +154,7 @@ public class BasketServiceImpl implements BasketService {
             ));
     }
 
-    private Mono<ProductResultDto> changeCount(Product product, Basket basket, ProductAction action) {
+    private Mono<Void> changeCount(Product product, Basket basket, ProductAction action) {
         Mono<Integer> count = switch (action) {
             case PLUS -> basketProductRepository.increment(basket.getId(), product.getId());
             case MINUS -> basketProductRepository.decrement(basket.getId(), product.getId());
@@ -162,10 +162,10 @@ public class BasketServiceImpl implements BasketService {
         };
 
         return count
-            .map(updatedCount -> marketMapper.toProductResultDto(product, updatedCount))
             .switchIfEmpty(Mono.error(new NotRemoveItemException(
                 "Товар с id %d отсутствует в корзине".formatted(product.getId())
-            )));
+            )))
+            .then();
     }
 
     private Mono<Void> rejectDelete(ProductAction action) {

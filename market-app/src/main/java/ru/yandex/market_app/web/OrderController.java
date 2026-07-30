@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import reactor.core.publisher.Mono;
 import ru.yandex.market_app.payment.InsufficientFundsException;
+import ru.yandex.market_app.payment.PaymentRejectedException;
 import ru.yandex.market_app.payment.PaymentServiceUnavailableException;
 import ru.yandex.market_app.service.OrderService;
 import ru.yandex.market_app.util.RedirectUrlUtil;
@@ -55,6 +56,10 @@ public final class OrderController {
             .onErrorResume(
                 PaymentServiceUnavailableException.class,
                 error -> Mono.just("redirect:/cart/items?paymentError=SERVICE_UNAVAILABLE")
+            )
+            .onErrorResume(
+                PaymentRejectedException.class,
+                error -> Mono.just("redirect:/cart/items?paymentError=PAYMENT_REJECTED")
             );
     }
 }

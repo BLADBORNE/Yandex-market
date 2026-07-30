@@ -56,8 +56,8 @@ public final class BasketController {
             return Mono.just(CartPaymentState.empty());
         }
 
-        if ("SERVICE_UNAVAILABLE".equals(paymentError)) {
-            return Mono.just(CartPaymentState.unavailable());
+        if ("PAYMENT_REJECTED".equals(paymentError)) {
+            return Mono.just(CartPaymentState.rejected());
         }
 
         return paymentGateway.getBalance()

@@ -12,6 +12,7 @@ import ru.yandex.market_app.cache.CachedProductCatalog;
 import ru.yandex.market_app.configuration.ProductCacheProperties;
 import ru.yandex.market_app.integration.ReactiveIntegrationTest;
 import ru.yandex.market_app.integration.ReactiveIntegrationTestSupport;
+import ru.yandex.market_app.service.BasketService;
 import ru.yandex.market_app.service.ProductService;
 
 import java.math.BigDecimal;
@@ -21,6 +22,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static ru.yandex.market_app.model.ProductAction.PLUS;
 import static ru.yandex.market_app.util.ProductPageableUtil.ProductSort.NO;
 
 @ReactiveIntegrationTest
@@ -30,6 +32,7 @@ class ProductCacheIntegrationTest extends ReactiveIntegrationTestSupport {
     private static final String TEMPORARY_TITLE = "Товар для проверки Redis";
 
     private final ProductService productService;
+    private final BasketService basketService;
     private final ReactiveRedisTemplate<String, CachedProductCatalog> redisTemplate;
     private final ProductCacheProperties cacheProperties;
 
@@ -105,6 +108,37 @@ class ProductCacheIntegrationTest extends ReactiveIntegrationTestSupport {
         StepVerifier.create(scenario).verifyComplete();
     }
 
+    @Test
+    void shouldHydrateCartMetadataFromCacheAndKeepCountInDatabase() {
+        BigDecimal updatedPrice = BigDecimal.ONE;
+
+        var scenario = resetDatabase()
+            .then(basketService.changeProductCountFromStartPage(1L, PLUS))
+            .then(basketService.getCart())
+            .flatMap(originalCart -> Mono.usingWhen(
+                Mono.just(originalCart.items().getFirst().price()),
+                originalPrice -> updatePrice(1L, updatedPrice)
+                    .then(basketService.changeProductCountFromStartPage(1L, PLUS))
+                    .then(basketService.getCart())
+                    .doOnNext(cachedCart -> {
+                        assertEquals(2, cachedCart.items().getFirst().count());
+                        assertEquals(0, originalPrice.compareTo(cachedCart.items().getFirst().price()));
+                    })
+                    .then(productCatalogCache.evict())
+                    .then(basketService.getCart())
+                    .doOnNext(refreshedCart -> {
+                        assertEquals(2, refreshedCart.items().getFirst().count());
+                        assertEquals(0, updatedPrice.compareTo(refreshedCart.items().getFirst().price()));
+                    })
+                    .then(),
+                originalPrice -> restorePrice(originalPrice),
+                (originalPrice, error) -> restorePrice(originalPrice),
+                this::restorePrice
+            ));
+
+        StepVerifier.create(scenario).verifyComplete();
+    }
+
     private Mono<Long> insertTemporaryProduct() {
         return databaseClient.sql("""
                 INSERT INTO market.product (title, description, img_path, price)
@@ -135,5 +169,18 @@ class ProductCacheIntegrationTest extends ReactiveIntegrationTestSupport {
 
     private Mono<Void> restoreTitle(String title) {
         return updateTitle(1L, title).then(productCatalogCache.evict());
+    }
+
+    private Mono<Void> updatePrice(Long productId, BigDecimal price) {
+        return databaseClient.sql("UPDATE market.product SET price = :price WHERE id = :id")
+            .bind("price", price)
+            .bind("id", productId)
+            .fetch()
+            .rowsUpdated()
+            .then();
+    }
+
+    private Mono<Void> restorePrice(BigDecimal price) {
+        return updatePrice(1L, price).then(productCatalogCache.evict());
     }
 }

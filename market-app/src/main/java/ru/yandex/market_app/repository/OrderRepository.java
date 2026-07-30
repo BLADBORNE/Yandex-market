@@ -37,6 +37,17 @@ public class OrderRepository {
             .one();
     }
 
+    public Mono<Long> findIdByBasketId(Long basketId) {
+        return databaseClient.sql("""
+                SELECT id
+                FROM market."order"
+                WHERE basket_id = :basketId
+                """)
+            .bind("basketId", basketId)
+            .map((row, metadata) -> row.get("id", Long.class))
+            .one();
+    }
+
     public Mono<Long> create(Long basketId, BigDecimal sum) {
         return databaseClient.sql("""
                 INSERT INTO market."order" (basket_id, sum)
