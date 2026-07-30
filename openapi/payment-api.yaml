@@ -1,0 +1,136 @@
+openapi: 3.0.3
+info:
+  title: Payment Service API
+  description: Reactive JSON API used by the market application to check and debit the payment balance.
+  version: 1.0.0
+servers:
+  - url: http://localhost:8081
+tags:
+  - name: Payments
+    description: Balance and payment operations
+paths:
+  /api/v1/balance:
+    get:
+      tags:
+        - Payments
+      operationId: getBalance
+      summary: Get the current account balance
+      responses:
+        '200':
+          description: Current balance
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BalanceResponse'
+        '503':
+          description: Payment service is temporarily unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/payment:
+    post:
+      tags:
+        - Payments
+      operationId: makePayment
+      summary: Debit an amount from the account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentRequest'
+      responses:
+        '200':
+          description: Payment completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Insufficient funds or an idempotency conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal payment error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+components:
+  schemas:
+    BalanceResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - balance
+      properties:
+        balance:
+          type: number
+          minimum: 0
+          multipleOf: 0.01
+          example: 1000000.00
+    PaymentRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - requestId
+        - amount
+      properties:
+        requestId:
+          type: string
+          format: uuid
+          description: Stable idempotency key supplied by the market application.
+        amount:
+          type: number
+          minimum: 0.01
+          multipleOf: 0.01
+          example: 1499.90
+    PaymentResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - requestId
+        - amount
+        - remainingBalance
+      properties:
+        requestId:
+          type: string
+          format: uuid
+        amount:
+          type: number
+          minimum: 0.01
+          multipleOf: 0.01
+        remainingBalance:
+          type: number
+          minimum: 0
+          multipleOf: 0.01
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          example: INSUFFICIENT_FUNDS
+        message:
+          type: string
+          example: Insufficient funds
+        availableBalance:
+          type: number
+          minimum: 0
+          multipleOf: 0.01
+        requiredAmount:
+          type: number
+          minimum: 0.01
+          multipleOf: 0.01
