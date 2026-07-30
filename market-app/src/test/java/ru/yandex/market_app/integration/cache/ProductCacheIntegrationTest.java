@@ -66,13 +66,13 @@ class ProductCacheIntegrationTest extends ReactiveIntegrationTestSupport {
     @Test
     void shouldUseCachedListUntilExactKeyIsEvicted() {
         var scenario = resetDatabase()
-            .then(productService.getProducts("", NO, PageRequest.of(0, 100)))
+            .then(productService.getProducts("", NO, PageRequest.of(0, 100), null))
             .then(Mono.usingWhen(
                 insertTemporaryProduct(),
-                productId -> productService.getProducts(TEMPORARY_TITLE, NO, PageRequest.of(0, 5))
+                productId -> productService.getProducts(TEMPORARY_TITLE, NO, PageRequest.of(0, 5), null)
                     .doOnNext(cachedResult -> assertTrue(cachedResult.items().isEmpty()))
                     .then(productCatalogCache.evict())
-                    .then(productService.getProducts(TEMPORARY_TITLE, NO, PageRequest.of(0, 5)))
+                    .then(productService.getProducts(TEMPORARY_TITLE, NO, PageRequest.of(0, 5), null))
                     .doOnNext(refreshedResult -> {
                         assertFalse(refreshedResult.items().isEmpty());
                         assertEquals(TEMPORARY_TITLE, refreshedResult.items().getFirst().getFirst().title());
@@ -92,12 +92,12 @@ class ProductCacheIntegrationTest extends ReactiveIntegrationTestSupport {
 
         var scenario = resetDatabase()
             .then(Mono.usingWhen(
-                productService.getItem(1L),
+                productService.getItem(1L, null),
                 original -> updateTitle(1L, updatedTitle)
-                    .then(productService.getItem(1L))
+                    .then(productService.getItem(1L, null))
                     .doOnNext(cached -> assertEquals(original.title(), cached.title()))
                     .then(productCatalogCache.evict())
-                    .then(productService.getItem(1L))
+                    .then(productService.getItem(1L, null))
                     .doOnNext(refreshed -> assertEquals(updatedTitle, refreshed.title()))
                     .then(),
                 original -> restoreTitle(original.title()),
@@ -113,19 +113,19 @@ class ProductCacheIntegrationTest extends ReactiveIntegrationTestSupport {
         BigDecimal updatedPrice = BigDecimal.ONE;
 
         var scenario = resetDatabase()
-            .then(basketService.changeProductCountFromStartPage(1L, PLUS))
-            .then(basketService.getCart())
+            .then(basketService.changeProductCountFromStartPage(ALICE_ID, 1L, PLUS))
+            .then(basketService.getCart(ALICE_ID))
             .flatMap(originalCart -> Mono.usingWhen(
                 Mono.just(originalCart.items().getFirst().price()),
                 originalPrice -> updatePrice(1L, updatedPrice)
-                    .then(basketService.changeProductCountFromStartPage(1L, PLUS))
-                    .then(basketService.getCart())
+                    .then(basketService.changeProductCountFromStartPage(ALICE_ID, 1L, PLUS))
+                    .then(basketService.getCart(ALICE_ID))
                     .doOnNext(cachedCart -> {
                         assertEquals(2, cachedCart.items().getFirst().count());
                         assertEquals(0, originalPrice.compareTo(cachedCart.items().getFirst().price()));
                     })
                     .then(productCatalogCache.evict())
-                    .then(basketService.getCart())
+                    .then(basketService.getCart(ALICE_ID))
                     .doOnNext(refreshedCart -> {
                         assertEquals(2, refreshedCart.items().getFirst().count());
                         assertEquals(0, updatedPrice.compareTo(refreshedCart.items().getFirst().price()));

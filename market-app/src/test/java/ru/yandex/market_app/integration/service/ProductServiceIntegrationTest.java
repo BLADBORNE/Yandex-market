@@ -9,6 +9,7 @@ import reactor.test.StepVerifier;
 import ru.yandex.market_app.exception.ItemNotFoundException;
 import ru.yandex.market_app.integration.ReactiveIntegrationTest;
 import ru.yandex.market_app.integration.ReactiveIntegrationTestSupport;
+import ru.yandex.market_app.service.BasketService;
 import ru.yandex.market_app.service.ProductService;
 
 import java.math.BigDecimal;
@@ -26,6 +27,7 @@ import static ru.yandex.market_app.util.ProductPageableUtil.ProductSort.PRICE;
 class ProductServiceIntegrationTest extends ReactiveIntegrationTestSupport {
 
     private final ProductService productService;
+    private final BasketService basketService;
 
     @Test
     void shouldRejectProductPriceThatPaymentServiceCannotProcess() {
@@ -41,7 +43,7 @@ class ProductServiceIntegrationTest extends ReactiveIntegrationTestSupport {
 
     @Test
     void shouldGetProductWithZeroCartCount() {
-        StepVerifier.create(resetDatabase().then(productService.getItem(1L)))
+        StepVerifier.create(resetDatabase().then(productService.getItem(1L, null)))
             .assertNext(product -> {
                 assertEquals(1L, product.id());
                 assertEquals("Ноутбук ASUS VivoBook", product.title());
@@ -54,8 +56,31 @@ class ProductServiceIntegrationTest extends ReactiveIntegrationTestSupport {
     }
 
     @Test
+    void shouldExposeCartCountsOnlyToTheirOwner() {
+        var scenario = resetDatabase()
+            .then(basketService.changeProductCountFromStartPage(
+                ALICE_ID,
+                1L,
+                ru.yandex.market_app.model.ProductAction.PLUS
+            ))
+            .then(reactor.core.publisher.Mono.zip(
+                productService.getItem(1L, ALICE_ID),
+                productService.getItem(1L, BOB_ID),
+                productService.getItem(1L, null)
+            ));
+
+        StepVerifier.create(scenario)
+            .assertNext(items -> {
+                assertEquals(1, items.getT1().count());
+                assertEquals(0, items.getT2().count());
+                assertEquals(0, items.getT3().count());
+            })
+            .verifyComplete();
+    }
+
+    @Test
     void shouldFailWhenProductDoesNotExist() {
-        StepVerifier.create(resetDatabase().then(productService.getItem(Long.MAX_VALUE)))
+        StepVerifier.create(resetDatabase().then(productService.getItem(Long.MAX_VALUE, null)))
             .expectErrorMatches(error -> error instanceof ItemNotFoundException
                 && error.getMessage().contains(String.valueOf(Long.MAX_VALUE)))
             .verify();
@@ -66,7 +91,8 @@ class ProductServiceIntegrationTest extends ReactiveIntegrationTestSupport {
         StepVerifier.create(resetDatabase().then(productService.getProducts(
                 "ноутБУК",
                 NO,
-                PageRequest.of(0, 5)
+                PageRequest.of(0, 5),
+                null
             )))
             .assertNext(result -> {
                 assertEquals(1, result.items().size());
@@ -76,7 +102,7 @@ class ProductServiceIntegrationTest extends ReactiveIntegrationTestSupport {
             })
             .verifyComplete();
 
-        StepVerifier.create(productService.getProducts("шумоподавление", NO, PageRequest.of(0, 5)))
+        StepVerifier.create(productService.getProducts("шумоподавление", NO, PageRequest.of(0, 5), null))
             .assertNext(result ->
                 assertEquals("Наушники Sony WH-1000XM5", result.items().getFirst().getFirst().title()))
             .verifyComplete();
@@ -87,7 +113,8 @@ class ProductServiceIntegrationTest extends ReactiveIntegrationTestSupport {
         StepVerifier.create(resetDatabase().then(productService.getProducts(
                 "' OR 1=1 --",
                 NO,
-                PageRequest.of(0, 5)
+                PageRequest.of(0, 5),
+                null
             )))
             .assertNext(result -> assertTrue(result.items().isEmpty()))
             .verifyComplete();
@@ -95,7 +122,9 @@ class ProductServiceIntegrationTest extends ReactiveIntegrationTestSupport {
 
     @Test
     void shouldSortAndBuildStablePagingMetadata() {
-        StepVerifier.create(resetDatabase().then(productService.getProducts("", PRICE, PageRequest.of(0, 2))))
+        StepVerifier.create(resetDatabase().then(
+            productService.getProducts("", PRICE, PageRequest.of(0, 2), null)
+        ))
             .assertNext(result -> {
                 assertEquals("Умная лампа Philips Hue", result.items().getFirst().getFirst().title());
                 assertEquals("Фитнес-браслет Xiaomi Band", result.items().getFirst().get(1).title());
@@ -106,7 +135,7 @@ class ProductServiceIntegrationTest extends ReactiveIntegrationTestSupport {
             })
             .verifyComplete();
 
-        StepVerifier.create(productService.getProducts("", ALPHA, PageRequest.of(1, 5)))
+        StepVerifier.create(productService.getProducts("", ALPHA, PageRequest.of(1, 5), null))
             .assertNext(result -> {
                 var productIds = result.items().stream()
                     .flatMap(List::stream)
@@ -124,7 +153,9 @@ class ProductServiceIntegrationTest extends ReactiveIntegrationTestSupport {
 
     @Test
     void shouldApplyDeterministicDefaultAndPriceSorts() {
-        StepVerifier.create(resetDatabase().then(productService.getProducts("", NO, PageRequest.of(0, 5))))
+        StepVerifier.create(resetDatabase().then(
+            productService.getProducts("", NO, PageRequest.of(0, 5), null)
+        ))
             .assertNext(result -> {
                 var productIds = result.items().stream()
                     .flatMap(List::stream)
@@ -136,7 +167,7 @@ class ProductServiceIntegrationTest extends ReactiveIntegrationTestSupport {
             })
             .verifyComplete();
 
-        StepVerifier.create(productService.getProducts("", PRICE, PageRequest.of(0, 20)))
+        StepVerifier.create(productService.getProducts("", PRICE, PageRequest.of(0, 20), null))
             .assertNext(result -> {
                 var productIds = result.items().stream()
                     .flatMap(List::stream)
@@ -154,7 +185,8 @@ class ProductServiceIntegrationTest extends ReactiveIntegrationTestSupport {
         StepVerifier.create(resetDatabase().then(productService.getProducts(
                 "товар-которого-нет",
                 NO,
-                PageRequest.of(2, 10)
+                PageRequest.of(2, 10),
+                null
             )))
             .assertNext(result -> {
                 assertTrue(result.items().isEmpty());

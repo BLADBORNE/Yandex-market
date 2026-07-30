@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 import ru.yandex.market_app.exception.NotRemoveItemException;
 import ru.yandex.market_app.exception.OperationNotSupportedException;
@@ -33,7 +34,7 @@ class BasketServiceIntegrationTest extends ReactiveIntegrationTestSupport {
 
     @Test
     void shouldReturnEmptyCart() {
-        StepVerifier.create(resetDatabase().then(basketService.getCart()))
+        StepVerifier.create(resetDatabase().then(basketService.getCart(ALICE_ID)))
             .assertNext(cart -> {
                 assertTrue(cart.items().isEmpty());
                 assertEquals(0, BigDecimal.ZERO.compareTo(cart.total()));
@@ -44,17 +45,17 @@ class BasketServiceIntegrationTest extends ReactiveIntegrationTestSupport {
     @Test
     void shouldAddIncreaseDecreaseAndRemoveProduct() {
         var scenario = resetDatabase()
-            .then(basketService.changeProductCountFromStartPage(PRODUCT_ID, PLUS))
-            .then(basketService.changeProductCountFromItemPage(PRODUCT_ID, PLUS))
-            .then(basketService.changeProductCountFromCartPage(PRODUCT_ID, MINUS))
-            .then(basketService.getCart())
+            .then(basketService.changeProductCountFromStartPage(ALICE_ID, PRODUCT_ID, PLUS))
+            .then(basketService.changeProductCountFromItemPage(ALICE_ID, PRODUCT_ID, PLUS))
+            .then(basketService.changeProductCountFromCartPage(ALICE_ID, PRODUCT_ID, MINUS))
+            .then(basketService.getCart(ALICE_ID))
             .doOnNext(cart -> {
                 assertEquals(1, cart.items().size());
                 assertEquals(1, cart.items().getFirst().count());
                 assertEquals(0, PRODUCT_PRICE.compareTo(cart.total()));
             })
-            .then(basketService.changeProductCountFromCartPage(PRODUCT_ID, DELETE))
-            .then(basketService.getCart());
+            .then(basketService.changeProductCountFromCartPage(ALICE_ID, PRODUCT_ID, DELETE))
+            .then(basketService.getCart(ALICE_ID));
 
         StepVerifier.create(scenario)
             .assertNext(cart -> {
@@ -67,11 +68,11 @@ class BasketServiceIntegrationTest extends ReactiveIntegrationTestSupport {
     @Test
     void shouldRejectDeleteOutsideCart() {
         StepVerifier.create(resetDatabase()
-                .then(basketService.changeProductCountFromStartPage(PRODUCT_ID, DELETE)))
+                .then(basketService.changeProductCountFromStartPage(ALICE_ID, PRODUCT_ID, DELETE)))
             .expectError(OperationNotSupportedException.class)
             .verify();
 
-        StepVerifier.create(basketService.changeProductCountFromItemPage(PRODUCT_ID, DELETE))
+        StepVerifier.create(basketService.changeProductCountFromItemPage(ALICE_ID, PRODUCT_ID, DELETE))
             .expectError(OperationNotSupportedException.class)
             .verify();
     }
@@ -79,14 +80,14 @@ class BasketServiceIntegrationTest extends ReactiveIntegrationTestSupport {
     @Test
     void shouldRejectRemovalWhenCartOrItemIsMissing() {
         StepVerifier.create(resetDatabase()
-                .then(basketService.changeProductCountFromCartPage(PRODUCT_ID, MINUS)))
+                .then(basketService.changeProductCountFromCartPage(ALICE_ID, PRODUCT_ID, MINUS)))
             .expectErrorMatches(error -> error instanceof NotRemoveItemException
                 && error.getMessage().contains("Корзина не создана"))
             .verify();
 
         var missingItemScenario = resetDatabase()
-            .then(basketService.changeProductCountFromStartPage(PRODUCT_ID, PLUS))
-            .then(basketService.changeProductCountFromCartPage(2L, MINUS));
+            .then(basketService.changeProductCountFromStartPage(ALICE_ID, PRODUCT_ID, PLUS))
+            .then(basketService.changeProductCountFromCartPage(ALICE_ID, 2L, MINUS));
 
         StepVerifier.create(missingItemScenario)
             .expectErrorMatches(error -> error instanceof NotRemoveItemException
@@ -97,7 +98,7 @@ class BasketServiceIntegrationTest extends ReactiveIntegrationTestSupport {
     @Test
     void shouldFailForUnknownProduct() {
         StepVerifier.create(resetDatabase()
-                .then(basketService.changeProductCountFromStartPage(Long.MAX_VALUE, PLUS)))
+                .then(basketService.changeProductCountFromStartPage(ALICE_ID, Long.MAX_VALUE, PLUS)))
             .expectError(NoSuchElementException.class)
             .verify();
     }
@@ -105,10 +106,10 @@ class BasketServiceIntegrationTest extends ReactiveIntegrationTestSupport {
     @Test
     void shouldKeepOneActiveBasketAfterItBecomesEmpty() {
         var scenario = resetDatabase()
-            .then(basketService.changeProductCountFromStartPage(PRODUCT_ID, PLUS))
-            .then(basketService.changeProductCountFromStartPage(PRODUCT_ID, MINUS))
-            .then(basketService.changeProductCountFromStartPage(2L, PLUS))
-            .then(basketService.getCart());
+            .then(basketService.changeProductCountFromStartPage(ALICE_ID, PRODUCT_ID, PLUS))
+            .then(basketService.changeProductCountFromStartPage(ALICE_ID, PRODUCT_ID, MINUS))
+            .then(basketService.changeProductCountFromStartPage(ALICE_ID, 2L, PLUS))
+            .then(basketService.getCart(ALICE_ID));
 
         StepVerifier.create(scenario)
             .assertNext(cart -> {
@@ -123,8 +124,11 @@ class BasketServiceIntegrationTest extends ReactiveIntegrationTestSupport {
         int increments = 12;
         var scenario = resetDatabase()
             .thenMany(Flux.range(0, increments)
-                .flatMap(ignored -> basketService.changeProductCountFromStartPage(PRODUCT_ID, PLUS), increments))
-            .then(basketService.getCart());
+                .flatMap(
+                    ignored -> basketService.changeProductCountFromStartPage(ALICE_ID, PRODUCT_ID, PLUS),
+                    increments
+                ))
+            .then(basketService.getCart(ALICE_ID));
 
         StepVerifier.create(scenario)
             .assertNext(cart -> {
@@ -140,19 +144,37 @@ class BasketServiceIntegrationTest extends ReactiveIntegrationTestSupport {
     @Test
     void shouldExposeAndCloseExactActiveBasket() {
         var scenario = resetDatabase()
-            .then(basketService.changeProductCountFromStartPage(PRODUCT_ID, PLUS))
-            .then(basketService.findLazyActiveBasket())
+            .then(basketService.changeProductCountFromStartPage(ALICE_ID, PRODUCT_ID, PLUS))
+            .then(basketService.findLazyActiveBasket(ALICE_ID))
             .flatMap(basketDto -> {
                 assertNotNull(basketDto.id());
                 assertEquals(0, PRODUCT_PRICE.compareTo(basketDto.totalSum()));
-                return basketService.getReferenceById(basketDto.id())
+                return basketService.getReferenceById(ALICE_ID, basketDto.id())
                     .doOnNext(basket -> assertEquals(Basket.Status.ACTIVE, basket.getStatus()))
-                    .then(basketService.closeActiveBasket(basketDto.id()));
+                    .then(basketService.closeActiveBasket(ALICE_ID, basketDto.id()));
             })
-            .then(basketService.findLazyActiveBasket());
+            .then(basketService.findLazyActiveBasket(ALICE_ID));
 
         StepVerifier.create(scenario)
             .expectError(NoSuchElementException.class)
             .verify();
+    }
+
+    @Test
+    void shouldKeepActiveCartsStrictlyIsolatedByUser() {
+        var scenario = resetDatabase()
+            .then(basketService.changeProductCountFromStartPage(ALICE_ID, PRODUCT_ID, PLUS))
+            .then(basketService.changeProductCountFromStartPage(BOB_ID, 2L, PLUS))
+            .then(Mono.zip(
+                basketService.getCart(ALICE_ID),
+                basketService.getCart(BOB_ID)
+            ));
+
+        StepVerifier.create(scenario)
+            .assertNext(carts -> {
+                assertEquals(PRODUCT_ID, carts.getT1().items().getFirst().id());
+                assertEquals(2L, carts.getT2().items().getFirst().id());
+            })
+            .verifyComplete();
     }
 }
