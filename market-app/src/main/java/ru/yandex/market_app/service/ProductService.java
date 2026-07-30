@@ -13,8 +13,9 @@ public interface ProductService {
     Mono<GetProductModelDto> getProducts(
         @Nullable String search,
         @NonNull ProductPageableUtil.ProductSort sort,
-        @NonNull Pageable pageable
+        @NonNull Pageable pageable,
+        @Nullable Long userId
     );
 
-    Mono<ProductResultDto> getItem(Long itemId);
+    Mono<ProductResultDto> getItem(Long itemId, @Nullable Long userId);
 }

@@ -5,6 +5,8 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Controller;
+import org.springframework.lang.Nullable;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.ui.Model;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -16,6 +18,7 @@ import reactor.core.publisher.Mono;
 import ru.yandex.market_app.dto.ActionRequest;
 import ru.yandex.market_app.dto.CatalogActionRequest;
 import ru.yandex.market_app.model.ProductAction;
+import ru.yandex.market_app.security.MarketUserPrincipal;
 import ru.yandex.market_app.service.BasketService;
 import ru.yandex.market_app.service.ProductService;
 import ru.yandex.market_app.util.ProductPageableUtil;
@@ -37,11 +40,13 @@ public class ProductController {
         @RequestParam(defaultValue = "NO") ProductPageableUtil.ProductSort sort,
         @RequestParam(defaultValue = "1") @Min(1) int pageNumber,
         @RequestParam(defaultValue = "5") @Min(1) @Max(100) int pageSize,
+        @AuthenticationPrincipal @Nullable MarketUserPrincipal principal,
         Model model
     ) {
         var page = ProductPageableUtil.createPageableBySort(sort, pageNumber, pageSize);
+        model.addAttribute(TemplateAttributeNameUtil.AUTHENTICATED, principal != null);
 
-        return productService.getProducts(search, sort, page)
+        return productService.getProducts(search, sort, page, userId(principal))
             .map(result -> {
                 model.addAttribute(TemplateAttributeNameUtil.ITEMS, result.items());
                 model.addAttribute(TemplateAttributeNameUtil.SEARCH, result.search());
@@ -53,9 +58,14 @@ public class ProductController {
 
     @PostMapping("/items")
     public Mono<String> changeProductCountFromStartPage(
-        @Valid @ModelAttribute CatalogActionRequest request
+        @Valid @ModelAttribute CatalogActionRequest request,
+        @AuthenticationPrincipal MarketUserPrincipal principal
     ) {
-        return basketService.changeProductCountFromStartPage(request.getId(), request.getAction())
+        return basketService.changeProductCountFromStartPage(
+                principal.userId(),
+                request.getId(),
+                request.getAction()
+            )
             .thenReturn(RedirectUrlUtil.toHomePage(
                 request.getSearch(),
                 request.getSort(),
@@ -65,8 +75,14 @@ public class ProductController {
     }
 
     @GetMapping("/items/{id}")
-    public Mono<String> getItem(@PathVariable Long id, Model model) {
-        return productService.getItem(id)
+    public Mono<String> getItem(
+        @PathVariable Long id,
+        @AuthenticationPrincipal @Nullable MarketUserPrincipal principal,
+        Model model
+    ) {
+        model.addAttribute(TemplateAttributeNameUtil.AUTHENTICATED, principal != null);
+
+        return productService.getItem(id, userId(principal))
             .map(item -> {
                 model.addAttribute(TemplateAttributeNameUtil.ITEM, item);
                 return TemplateNameUtil.ITEM;
@@ -77,13 +93,20 @@ public class ProductController {
     public Mono<String> changeProductCountFromItemPage(
         @PathVariable Long id,
         @Valid @ModelAttribute ActionRequest request,
+        @AuthenticationPrincipal MarketUserPrincipal principal,
         Model model
     ) {
-        return basketService.changeProductCountFromItemPage(id, request.getAction())
-            .then(Mono.defer(() -> productService.getItem(id)))
+        model.addAttribute(TemplateAttributeNameUtil.AUTHENTICATED, true);
+
+        return basketService.changeProductCountFromItemPage(principal.userId(), id, request.getAction())
+            .then(Mono.defer(() -> productService.getItem(id, principal.userId())))
             .map(item -> {
                 model.addAttribute(TemplateAttributeNameUtil.ITEM, item);
                 return TemplateNameUtil.ITEM;
             });
+    }
+
+    private Long userId(@Nullable MarketUserPrincipal principal) {
+        return principal == null ? null : principal.userId();
     }
 }

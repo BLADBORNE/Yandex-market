@@ -5,5 +5,5 @@ import ru.yandex.market_app.dto.ItemDto;
 
 public interface ProductQueryRepository {
 
-    Flux<ItemDto> findOrderItems(Long orderId);
+    Flux<ItemDto> findOrderItems(Long orderId, Long userId);
 }

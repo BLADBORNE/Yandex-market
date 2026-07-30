@@ -2,6 +2,7 @@ package ru.yandex.market_app.web;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Controller;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -11,6 +12,7 @@ import reactor.core.publisher.Mono;
 import ru.yandex.market_app.payment.InsufficientFundsException;
 import ru.yandex.market_app.payment.PaymentRejectedException;
 import ru.yandex.market_app.payment.PaymentServiceUnavailableException;
+import ru.yandex.market_app.security.MarketUserPrincipal;
 import ru.yandex.market_app.service.OrderService;
 import ru.yandex.market_app.util.RedirectUrlUtil;
 import ru.yandex.market_app.util.TemplateAttributeNameUtil;
@@ -23,8 +25,11 @@ public final class OrderController {
     private final OrderService orderService;
 
     @GetMapping("/orders")
-    public Mono<String> getOrders(Model model) {
-        return orderService.getOrders()
+    public Mono<String> getOrders(
+        @AuthenticationPrincipal MarketUserPrincipal principal,
+        Model model
+    ) {
+        return orderService.getOrders(principal.userId())
             .map(result -> {
                 model.addAttribute(TemplateAttributeNameUtil.ORDERS, result.orders());
                 return TemplateNameUtil.ORDERS;
@@ -35,9 +40,10 @@ public final class OrderController {
     public Mono<String> getOrder(
         @PathVariable Long id,
         @RequestParam(defaultValue = "false") Boolean newOrder,
+        @AuthenticationPrincipal MarketUserPrincipal principal,
         Model model
     ) {
-        return orderService.getOrder(id)
+        return orderService.getOrder(principal.userId(), id)
             .map(result -> {
                 model.addAttribute(TemplateAttributeNameUtil.ORDER, result);
                 model.addAttribute(TemplateAttributeNameUtil.NEW_ORDER, newOrder);
@@ -46,8 +52,8 @@ public final class OrderController {
     }
 
     @PostMapping("/buy")
-    public Mono<String> completeOrder() {
-        return orderService.completeOrder()
+    public Mono<String> completeOrder(@AuthenticationPrincipal MarketUserPrincipal principal) {
+        return orderService.completeOrder(principal.userId(), principal.paymentAccountId())
             .map(orderId -> RedirectUrlUtil.AFTER_BUY_PAGE.formatted(orderId))
             .onErrorResume(
                 InsufficientFundsException.class,

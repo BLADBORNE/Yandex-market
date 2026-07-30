@@ -15,6 +15,11 @@ paths:
         - Payments
       operationId: getBalance
       summary: Get the current account balance
+      security:
+        - oauth2:
+            - payment.read
+      parameters:
+        - $ref: '#/components/parameters/CustomerId'
       responses:
         '200':
           description: Current balance
@@ -22,6 +27,24 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BalanceResponse'
+        '400':
+          description: Invalid customer identifier
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid OAuth2 access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Access token does not grant the required scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '503':
           description: Payment service is temporarily unavailable
           content:
@@ -34,6 +57,11 @@ paths:
         - Payments
       operationId: makePayment
       summary: Debit an amount from the account
+      security:
+        - oauth2:
+            - payment.write
+      parameters:
+        - $ref: '#/components/parameters/CustomerId'
       requestBody:
         required: true
         content:
@@ -53,6 +81,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid OAuth2 access token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Access token does not grant the required scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '409':
           description: Insufficient funds or an idempotency conflict
           content:
@@ -66,6 +106,25 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      description: OAuth2 Client Credentials authorization for the market application.
+      flows:
+        clientCredentials:
+          tokenUrl: http://localhost:8082/realms/market/protocol/openid-connect/token
+          scopes:
+            payment.read: Read a customer's payment balance.
+            payment.write: Debit a customer's payment balance.
+  parameters:
+    CustomerId:
+      name: X-Customer-Id
+      in: header
+      required: true
+      description: Immutable customer identifier asserted by the authorized market application.
+      schema:
+        type: string
+        format: uuid
   schemas:
     BalanceResponse:
       type: object

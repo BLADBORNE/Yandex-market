@@ -10,6 +10,7 @@ import org.springframework.data.relational.core.mapping.Column;
 import org.springframework.data.relational.core.mapping.Table;
 
 import java.math.BigDecimal;
+import java.util.UUID;
 
 @Getter
 @Setter
@@ -25,5 +26,26 @@ public final class Order {
     @Column("basket_id")
     private Long basketId;
 
+    @Column("user_id")
+    private Long userId;
+
     private BigDecimal sum;
+
+    private Status status;
+
+    @Column("payment_account_id")
+    private UUID paymentAccountId;
+
+    @Column("payment_request_id")
+    private UUID paymentRequestId;
+
+    @Column("payment_attempted")
+    private boolean paymentAttempted;
+
+    public enum Status {
+
+        PENDING,
+
+        COMPLETED
+    }
 }
