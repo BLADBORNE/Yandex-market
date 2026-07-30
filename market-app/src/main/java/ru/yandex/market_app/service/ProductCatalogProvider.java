@@ -67,14 +67,6 @@ public class ProductCatalogProvider {
                 : Mono.just(catalog));
     }
 
-    public Mono<Void> evict() {
-        return productCatalogCache.evict()
-            .onErrorResume(ProductCacheAccessException.class, error -> {
-                log.warn("Не удалось удалить кеш товаров: {}", error.getMessage());
-                return Mono.empty();
-            });
-    }
-
     private boolean containsAll(CachedProductCatalog catalog, Set<Long> productIds) {
         if (productIds.isEmpty()) {
             return true;

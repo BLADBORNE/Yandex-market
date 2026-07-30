@@ -6,11 +6,17 @@ CREATE TABLE IF NOT EXISTS market.product
     title       VARCHAR(100)   NOT NULL UNIQUE,
     description VARCHAR(255)   NOT NULL,
     img_path    VARCHAR(100)   NOT NULL UNIQUE,
-    price       NUMERIC(19, 2) NOT NULL CHECK (price >= 0)
+    price       NUMERIC(19, 2) NOT NULL CHECK (price > 0)
 );
 
 ALTER TABLE market.product
     ALTER COLUMN price TYPE NUMERIC(19, 2);
+
+ALTER TABLE market.product
+    DROP CONSTRAINT IF EXISTS product_price_check;
+
+ALTER TABLE market.product
+    ADD CONSTRAINT product_price_check CHECK (price > 0);
 
 CREATE TABLE IF NOT EXISTS market.basket
 (

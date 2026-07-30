@@ -45,7 +45,7 @@ public class BasketServiceImpl implements BasketService {
     @Transactional
     @Override
     public Mono<Void> changeProductCountFromStartPage(@NonNull Long id, @NonNull ProductAction productAction) {
-        return rejectDelete(productAction).then(performChangeProductCount(id, productAction)).then();
+        return rejectDelete(productAction).then(performChangeProductCount(id, productAction));
     }
 
     @Transactional
@@ -54,13 +54,13 @@ public class BasketServiceImpl implements BasketService {
         @NonNull Long id,
         @NonNull ProductAction productAction
     ) {
-        return rejectDelete(productAction).then(performChangeProductCount(id, productAction)).then();
+        return rejectDelete(productAction).then(performChangeProductCount(id, productAction));
     }
 
     @Transactional
     @Override
     public Mono<Void> changeProductCountFromCartPage(@NonNull Long id, @NonNull ProductAction productAction) {
-        return performChangeProductCount(id, productAction).then();
+        return performChangeProductCount(id, productAction);
     }
 
     @Override

@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.dao.DataIntegrityViolationException;
 import reactor.test.StepVerifier;
 import ru.yandex.market_app.exception.ItemNotFoundException;
 import ru.yandex.market_app.integration.ReactiveIntegrationTest;
@@ -25,6 +26,18 @@ import static ru.yandex.market_app.util.ProductPageableUtil.ProductSort.PRICE;
 class ProductServiceIntegrationTest extends ReactiveIntegrationTestSupport {
 
     private final ProductService productService;
+
+    @Test
+    void shouldRejectProductPriceThatPaymentServiceCannotProcess() {
+        var updateToZero = resetDatabase()
+            .then(databaseClient.sql("UPDATE market.product SET price = 0 WHERE id = 1")
+                .fetch()
+                .rowsUpdated());
+
+        StepVerifier.create(updateToZero)
+            .expectError(DataIntegrityViolationException.class)
+            .verify();
+    }
 
     @Test
     void shouldGetProductWithZeroCartCount() {

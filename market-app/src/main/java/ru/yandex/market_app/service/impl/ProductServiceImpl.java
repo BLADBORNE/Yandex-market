@@ -66,10 +66,7 @@ public class ProductServiceImpl implements ProductService {
                 new ItemNotFoundException("Не найден объект с id = %d".formatted(itemId))
             ))
             .zipWith(basketProductRepository.findActiveProductCount(itemId).defaultIfEmpty(0))
-            .map(tuple -> marketMapper.toProductResultDto(tuple.getT1(), tuple.getT2()))
-            .switchIfEmpty(Mono.error(
-                new ItemNotFoundException("Не найден объект с id = %d".formatted(itemId))
-            ));
+            .map(tuple -> marketMapper.toProductResultDto(tuple.getT1(), tuple.getT2()));
     }
 
     private Predicate<CachedProduct> matches(String search) {
